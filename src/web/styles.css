@@ -1629,3 +1629,188 @@ textarea:focus-visible {
   background: #00ff00;
   color: #0a0a0a;
 }
+
+/* --- Logs panel (added with /api/logs round) --- */
+
+.logs-section {
+  border: 1px solid #333;
+  padding: 20px;
+  margin-bottom: 20px;
+  background: #111;
+}
+
+.logs-section .section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.logs-section .section-header h2 {
+  margin: 0;
+  flex: 0 0 auto;
+}
+
+.logs-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.logs-controls label {
+  color: #888;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.logs-controls select,
+.logs-controls input[type="text"] {
+  background: #0a0a0a;
+  border: 1px solid #333;
+  color: #ccc;
+  padding: 4px 8px;
+  font-family: inherit;
+  font-size: 12px;
+}
+
+.logs-controls input[type="text"] {
+  width: 200px;
+}
+
+.logs-controls button {
+  background: #0a0a0a;
+  border: 1px solid #00ff00;
+  color: #00ff00;
+  padding: 4px 10px;
+  font-family: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.logs-controls button:hover {
+  background: #00ff00;
+  color: #0a0a0a;
+}
+
+.logs-controls button.paused {
+  border-color: #ffaa00;
+  color: #ffaa00;
+}
+
+.logs-controls button.paused:hover {
+  background: #ffaa00;
+  color: #0a0a0a;
+}
+
+.logs-status {
+  font-size: 10px;
+  color: #666;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+
+.logs-status.connected {
+  color: #00ff00;
+}
+
+.logs-status.error {
+  color: #ff4444;
+}
+
+.logs-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  font-family: monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  background: #0a0a0a;
+  border: 1px solid #1a1a1a;
+  padding: 8px;
+}
+
+.log-entry {
+  padding: 4px 6px;
+  border-bottom: 1px solid #161616;
+  word-break: break-word;
+}
+
+.log-entry:hover {
+  background: #131313;
+}
+
+.log-entry .log-header {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  flex-wrap: wrap;
+}
+
+.log-entry .log-time {
+  color: #666;
+  font-size: 10px;
+}
+
+.log-entry .log-level {
+  font-weight: bold;
+  font-size: 10px;
+  padding: 1px 4px;
+  text-transform: uppercase;
+}
+
+.log-entry .log-level-debug {
+  color: #666;
+  border: 1px solid #333;
+}
+
+.log-entry .log-level-info {
+  color: #00ccff;
+  border: 1px solid #00ccff;
+}
+
+.log-entry .log-level-warn {
+  color: #ffaa00;
+  border: 1px solid #ffaa00;
+}
+
+.log-entry .log-level-error {
+  color: #ff4444;
+  border: 1px solid #ff4444;
+}
+
+.log-entry .log-scope {
+  color: #00ff00;
+  font-size: 10px;
+}
+
+.log-entry .log-message {
+  color: #d0d0d0;
+  flex: 1;
+}
+
+.log-entry .log-context {
+  margin-top: 4px;
+  margin-left: 12px;
+  color: #888;
+  font-size: 10px;
+  white-space: pre-wrap;
+}
+
+.log-entry .log-error {
+  margin-top: 4px;
+  margin-left: 12px;
+  padding: 4px 6px;
+  background: #1a0808;
+  border-left: 2px solid #ff4444;
+  color: #ffaaaa;
+  font-size: 10px;
+  white-space: pre-wrap;
+}

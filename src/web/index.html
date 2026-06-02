@@ -45,6 +45,10 @@
           <i data-lucide="user" class="icon"></i>
           USER PROFILE
         </button>
+        <button id="tab-logs" class="tab-btn" data-i18n="tab-logs">
+          <i data-lucide="terminal" class="icon"></i>
+          LOGS
+        </button>
       </div>
 
       <div class="controls">
@@ -159,6 +163,38 @@
         <div id="profile-content" class="profile-content">
           <div class="loading" data-i18n="loading-profile">Loading profile...</div>
         </div>
+      </div>
+
+      <div class="logs-section hidden" id="logs-section">
+        <div class="section-header">
+          <h2 data-i18n="section-logs">└─ LOGS ──</h2>
+          <div class="logs-controls">
+            <label data-i18n="label-min-level">Min level:</label>
+            <select id="logs-min-level">
+              <option value="debug">DEBUG</option>
+              <option value="info" selected>INFO</option>
+              <option value="warn">WARN</option>
+              <option value="error">ERROR</option>
+            </select>
+            <input
+              type="text"
+              id="logs-scope-filter"
+              placeholder="scope (e.g. auto-capture)"
+              data-i18n-placeholder="placeholder-scope-filter"
+            />
+            <button id="logs-toggle-btn" class="btn-secondary" data-i18n="btn-pause">
+              <i data-lucide="pause" class="icon"></i> Pause
+            </button>
+            <button id="logs-clear-btn" class="btn-secondary" data-i18n="btn-clear-logs">
+              <i data-lucide="trash" class="icon"></i> Clear
+            </button>
+            <button id="logs-trigger-btn" class="btn-primary" data-i18n="btn-trigger-capture">
+              <i data-lucide="zap" class="icon"></i> Trigger capture
+            </button>
+          </div>
+        </div>
+        <div id="logs-status" class="logs-status">disconnected</div>
+        <div id="logs-list" class="logs-list"></div>
       </div>
 
       <div class="add-section">

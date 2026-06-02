@@ -26,6 +26,9 @@ import {
   handleGetProfileChangelog,
   handleGetProfileSnapshot,
   handleRefreshProfile,
+  handleGetLogs,
+  handleGetLogsStream,
+  handleTriggerAutoCapture,
 } from "./api-handlers.js";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -388,6 +391,28 @@ export class WebServer {
         return this.jsonResponse(result);
       }
 
+      if (path === "/api/logs" && method === "GET") {
+        const tail = parseIntOr(url.searchParams.get("tail"), 100);
+        const minLevel = url.searchParams.get("minLevel") ?? "info";
+        const scope = url.searchParams.get("scope") ?? undefined;
+        const since = url.searchParams.get("since") ?? undefined;
+        const result = handleGetLogs({ tail, minLevel, scope, since });
+        return this.jsonResponse(result);
+      }
+
+      if (path === "/api/logs/stream" && method === "GET") {
+        const minLevel = url.searchParams.get("minLevel") ?? "info";
+        const scope = url.searchParams.get("scope") ?? undefined;
+        const { response } = handleGetLogsStream({ minLevel, scope });
+        return response;
+      }
+
+      if (path === "/api/auto-capture/trigger" && method === "POST") {
+        const body = (await req.json().catch(() => ({}))) as { sessionID?: string };
+        const result = handleTriggerAutoCapture({ sessionID: body.sessionID });
+        return this.jsonResponse(result);
+      }
+
       return new Response("Not Found", { status: 404 });
     } catch (error) {
       return this.jsonResponse(
@@ -439,6 +464,12 @@ export class WebServer {
       },
     });
   }
+}
+
+function parseIntOr(value: string | null, fallback: number): number {
+  if (value === null) return fallback;
+  const n = parseInt(value, 10);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 export async function startWebServer(config: WebServerConfig): Promise<WebServer> {
