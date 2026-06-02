@@ -1,0 +1,585 @@
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
+/**
+ * Mnemosyne logger.
+ *
+ * Output format (on disk):
+ *
+ *     [2026-06-02T17:42:11.331Z] ERROR [compaction.handler] compaction failed
+ *       level: error
+ *       scope: compaction.handler
+ *       sessionID: ses_abc123
+ *       error:
+ *         name: TypeError
+ *         message: Cannot read properties of undefined (reading 'foo')
+ *         stack: |
+ *           at CompactionHandler.run (compaction.ts:123:5)
+ *           at processTicksAndRejections (node:internal/process/task_queues:95:5)
+ *         cause:
+ *           name: Error
+ *           message: upstream returned 500
+ *
+ *     [2026-06-02T17:42:11.402Z] INFO [auto-capture] started
+ *       level: info
+ *       scope: auto-capture
+ *       sessionID: ses_abc123
+ *
+ * Designed so that:
+ *   - `tail -f <log>` is human-readable
+ *   - `tail -f <log> | grep -E '^\[[^]]*\] (ERROR|WARN)'` filters by level
+ *   - `tail -f <log> | sed -n '/^$/,$p'` extracts just the data block
+ *   - `/api/logs` returns the same entries as NDJSON
+ *   - `/api/logs/stream` (SSE) emits one `data: <json>\n\n` per new entry
+ */
+
+export type LogLevel = "debug" | "info" | "warn" | "error";
+
+const LEVEL_RANK: Record<LogLevel, number> = {
+  debug: 10,
+  info: 20,
+  warn: 30,
+  error: 40,
+};
+
+const LEVEL_LABEL: Record<LogLevel, string> = {
+  debug: "DEBUG",
+  info: "INFO",
+  warn: "WARN",
+  error: "ERROR",
+};
+
+const DEFAULT_MIN_LEVEL: LogLevel = "info";
+
+const GLOBAL_LOGGER_KEY = Symbol.for("opencode-mnemosyne.logger.initialized");
+const MAX_LOG_SIZE = 5 * 1024 * 1024;
+const SUBSCRIBER_KEY = Symbol.for("opencode-mnemosyne.logger.subscribers");
+
+/**
+ * Per-call structured context. Propagated via AsyncLocalStorage so any
+ * logger call inside a `runWithContext` callback gets the context
+ * automatically — no need to thread sessionID through every function.
+ */
+export interface LogContext {
+  sessionID?: string;
+  agentID?: string;
+  scope?: string;
+  [key: string]: unknown;
+}
+
+export interface LogEntry {
+  timestamp: string;
+  level: LogLevel;
+  scope: string;
+  message: string;
+  context: LogContext;
+  error?: SerializedError;
+}
+
+export interface SerializedError {
+  name: string;
+  message: string;
+  stack?: string;
+  cause?: SerializedError;
+}
+
+/** Subscriber callback receives each entry as it is emitted. */
+export type LogSubscriber = (entry: LogEntry) => void;
+
+// ---------------------------------------------------------------------------
+// Path / file rotation
+// ---------------------------------------------------------------------------
+
+function getLogFilePath(): string {
+  return (
+    process.env.OPENCODE_MNEMOSYNE_LOG_FILE ??
+    join(homedir(), ".opencode-mnemosyne", "opencode-mnemosyne.log")
+  );
+}
+
+function getLogDirPath(): string {
+  const logFile = getLogFilePath();
+  const lastSlash = Math.max(logFile.lastIndexOf("/"), logFile.lastIndexOf("\\"));
+  return lastSlash === -1 ? "." : logFile.slice(0, lastSlash);
+}
+
+function rotateLog(): void {
+  const logFile = getLogFilePath();
+  if (!existsSync(logFile)) return;
+  const stats = statSync(logFile);
+  if (stats.size < MAX_LOG_SIZE) return;
+
+  const oldLog = logFile + ".old";
+  if (existsSync(oldLog)) unlinkSync(oldLog);
+  renameSync(logFile, oldLog);
+}
+
+function ensureLoggerInitialized(): void {
+  if ((globalThis as Record<symbol, unknown>)[GLOBAL_LOGGER_KEY]) return;
+  const logDir = getLogDirPath();
+  if (!existsSync(logDir)) {
+    mkdirSync(logDir, { recursive: true });
+  }
+  rotateLog();
+  writeFileSync(getLogFilePath(), `\n--- Session started: ${new Date().toISOString()} ---\n\n`, {
+    flag: "a",
+  });
+  (globalThis as Record<symbol, unknown>)[GLOBAL_LOGGER_KEY] = true;
+}
+
+// ---------------------------------------------------------------------------
+// AsyncLocalStorage for context propagation
+// ---------------------------------------------------------------------------
+
+type AlsStore = { ctx: LogContext } | undefined;
+
+class ContextStore {
+  private store: AlsStore = undefined;
+  private listeners: Array<(s: AlsStore) => void> = [];
+
+  get(): AlsStore {
+    return this.store;
+  }
+
+  run<T>(ctx: LogContext, fn: () => T): T {
+    const previous = this.store;
+    const next: AlsStore = {
+      ctx: { ...(previous?.ctx ?? {}), ...ctx },
+    };
+    this.store = next;
+    this.notify();
+    try {
+      return fn();
+    } finally {
+      this.store = previous;
+      this.notify();
+    }
+  }
+
+  private notify(): void {
+    for (const l of this.listeners) l(this.store);
+  }
+}
+
+const _ctx = new ContextStore();
+
+/**
+ * Run `fn` with the given structured context attached. Any `logger.*`
+ * call inside `fn` (or anything it calls synchronously) will pick up
+ * the context automatically. Context composes: nested calls merge
+ * keys, with the innermost winning.
+ */
+export function runWithContext<T>(ctx: LogContext, fn: () => T): T {
+  return _ctx.run(ctx, fn);
+}
+
+function currentContext(): LogContext {
+  return _ctx.get()?.ctx ?? {};
+}
+
+// ---------------------------------------------------------------------------
+// Error serialization (preserves the .cause chain)
+// ---------------------------------------------------------------------------
+
+export function serializeError(err: unknown): SerializedError {
+  if (err === null || err === undefined) {
+    return { name: "NonError", message: String(err) };
+  }
+  if (typeof err === "string") {
+    return { name: "StringThrown", message: err };
+  }
+  if (typeof err !== "object") {
+    return { name: "NonError", message: String(err) };
+  }
+
+  // Best-effort: anything with a .message is treated as an Error-like.
+  const e = err as { name?: string; message?: string; stack?: string; cause?: unknown };
+  const serialized: SerializedError = {
+    name: e.name ?? "Error",
+    message: e.message ?? String(err),
+  };
+  // The stack is compressed to a single line so the on-disk format
+  // stays greppable (newlines in the middle of a value break the
+  // parser). The full multi-line stack is available via the API.
+  if (typeof e.stack === "string") {
+    serialized.stack = e.stack.replace(/\n\s+/g, " | ").replace(/\n/g, " | ");
+  }
+  if (e.cause !== undefined && e.cause !== err) {
+    serialized.cause = serializeError(e.cause);
+  }
+  return serialized;
+}
+
+// ---------------------------------------------------------------------------
+// Formatting
+// ---------------------------------------------------------------------------
+
+function formatValue(v: unknown, indent: string): string {
+  if (v === null || v === undefined) return String(v);
+  if (typeof v === "string") {
+    // Multi-line strings get indented continuation
+    if (v.includes("\n")) {
+      return (
+        "|\n" +
+        v
+          .split("\n")
+          .map((line) => indent + "  " + line)
+          .join("\n")
+      );
+    }
+    return v;
+  }
+  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (Array.isArray(v)) {
+    if (v.length === 0) return "[]";
+    return v.map((item) => "\n" + indent + "  - " + formatValue(item, indent + "  ")).join("");
+  }
+  if (typeof v === "object") {
+    const obj = v as Record<string, unknown>;
+    const keys = Object.keys(obj);
+    if (keys.length === 0) return "{}";
+    return keys
+      .map((k) => "\n" + indent + "  " + k + ": " + formatValue(obj[k], indent + "  "))
+      .join("");
+  }
+  return String(v);
+}
+
+function formatEntry(entry: LogEntry): string {
+  const header = `[${entry.timestamp}] ${LEVEL_LABEL[entry.level]} [${entry.scope}] ${entry.message}`;
+  const lines: string[] = [header];
+
+  // Context fields, normalized: level and scope go first for grep-friendliness.
+  const ctx: Record<string, unknown> = { level: entry.level, scope: entry.scope, ...entry.context };
+  // Drop empties to avoid noise.
+  for (const key of Object.keys(ctx)) {
+    const value = ctx[key];
+    if (value === undefined || value === null || value === "") {
+      delete ctx[key];
+    }
+  }
+  for (const key of Object.keys(ctx)) {
+    lines.push("  " + key + ": " + formatValue(ctx[key], "  "));
+  }
+
+  if (entry.error) {
+    lines.push("  error: " + formatValue(entry.error, "  "));
+  }
+
+  // Each entry is preceded by a blank line so `tail -f` is scannable
+  // and `wc -l` is roughly meaningful. The parser splits on the
+  // "[ISO" header pattern, so blank lines are purely cosmetic.
+  return "\n" + lines.join("\n") + "\n";
+}
+
+// ---------------------------------------------------------------------------
+// Core emit
+// ---------------------------------------------------------------------------
+
+function emit(
+  level: LogLevel,
+  scope: string,
+  message: string,
+  error?: unknown,
+  extra?: LogContext
+): void {
+  const minLevel =
+    (process.env.OPENCODE_MNEMOSYNE_LOG_LEVEL as LogLevel | undefined) ?? DEFAULT_MIN_LEVEL;
+  if (LEVEL_RANK[level] < LEVEL_RANK[minLevel]) return;
+
+  const merged: LogContext = { ...currentContext(), ...(extra ?? {}) };
+  const entry: LogEntry = {
+    timestamp: new Date().toISOString(),
+    level,
+    scope: scope || merged.scope || "app",
+    message,
+    context: merged,
+  };
+  if (error !== undefined) {
+    entry.error = serializeError(error);
+  }
+
+  ensureLoggerInitialized();
+  try {
+    appendFileSync(getLogFilePath(), "\n" + formatEntry(entry) + "\n");
+  } catch {
+    // If the log file is unwritable (disk full, permissions, etc.) we silently
+    // drop the entry. Logging must never crash the host process.
+  }
+
+  // Notify in-process subscribers (SSE stream, test spies).
+  const subs = (globalThis as Record<symbol, unknown>)[SUBSCRIBER_KEY] as
+    | Set<LogSubscriber>
+    | undefined;
+  if (subs) {
+    for (const s of subs) {
+      try {
+        s(entry);
+      } catch {
+        // Subscriber bugs must not break the emitter.
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+export const logger = {
+  debug(scope: string, message: string, extra?: LogContext): void {
+    emit("debug", scope, message, undefined, extra);
+  },
+  info(scope: string, message: string, extra?: LogContext): void {
+    emit("info", scope, message, undefined, extra);
+  },
+  warn(scope: string, message: string, error?: unknown, extra?: LogContext): void {
+    emit("warn", scope, message, error, extra);
+  },
+  error(scope: string, message: string, error?: unknown, extra?: LogContext): void {
+    emit("error", scope, message, error, extra);
+  },
+} as const;
+
+/**
+ * Backwards-compatible export used by the existing 80+ call sites:
+ *   log("Some message", { key: value });
+ * Routes to `logger.info` with scope "app" unless the caller passes a
+ * scope via the optional 3rd argument. If the data object contains an
+ * `error` key that is already an Error instance, the full chain is
+ * serialized; otherwise it is included as a regular context field.
+ *
+ * @deprecated Prefer `logger.info(scope, message, extra)` for new code.
+ */
+export function log(message: string, data?: unknown, scope?: string): void {
+  const extra: LogContext = {};
+  let error: unknown = undefined;
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const obj = data as Record<string, unknown>;
+    if (obj.error instanceof Error) {
+      error = obj.error;
+      const { error: _e, ...rest } = obj;
+      Object.assign(extra, rest);
+    } else {
+      Object.assign(extra, obj);
+    }
+  } else if (data !== undefined) {
+    extra.data = data;
+  }
+  emit("info", scope ?? "app", message, error, extra);
+}
+
+// ---------------------------------------------------------------------------
+// Reader helpers (for /api/logs and tests)
+// ---------------------------------------------------------------------------
+
+/**
+ * Read the last `n` lines from the log file. Returns parsed LogEntry
+ * objects. Lines that don't parse as Mnemosyne log entries (e.g. the
+ * "--- Session started ---" markers) are returned as synthetic entries
+ * with `level: "info"` and the raw text in `message`.
+ */
+export function readLastEntries(n: number): LogEntry[] {
+  ensureLoggerInitialized();
+  const path = getLogFilePath();
+  if (!existsSync(path)) return [];
+  const text = readFileSyncSafely(path);
+  return parseEntries(text).slice(-n);
+}
+
+function readFileSyncSafely(path: string): string {
+  try {
+    return readFileSync(path, "utf-8");
+  } catch {
+    return "";
+  }
+}
+
+const HEADER_RE = /^\[([^\]]+)\] (DEBUG|INFO|WARN|ERROR) \[([^\]]+)\] (.*)$/;
+
+/**
+ * Parse the on-disk text into structured entries. Entries are
+ * delimited by lines that match the Mnemosyne header pattern
+ * (starting with `[ISO] LEVEL [scope]`). Lines that don't match the
+ * header pattern and aren't indented are treated as synthetic info
+ * entries (e.g. the "--- Session started ---" markers).
+ */
+export function parseEntries(text: string): LogEntry[] {
+  const lines = text.split("\n");
+  const entries: LogEntry[] = [];
+  let current: { header: string; body: string[] } | null = null;
+
+  const flush = (): void => {
+    if (!current) return;
+    const m = HEADER_RE.exec(current.header);
+    if (!m) {
+      entries.push({
+        timestamp: new Date(0).toISOString(),
+        level: "info",
+        scope: "system",
+        message: current.header,
+        context: {},
+      });
+    } else {
+      const timestamp = m[1] ?? new Date().toISOString();
+      const levelStr = m[2] ?? "INFO";
+      const scope = m[3] ?? "app";
+      const message = m[4] ?? "";
+      const level = levelStr.toLowerCase() as LogLevel;
+      const context: LogContext = {};
+      let error: SerializedError | undefined;
+
+      let i = 0;
+      while (i < current.body.length) {
+        const line = current.body[i];
+        if (line === undefined) {
+          i++;
+          continue;
+        }
+        const colonIdx = line.indexOf(":");
+        if (colonIdx === -1) {
+          i++;
+          continue;
+        }
+        const key = line.slice(0, colonIdx).trim();
+        let valueText = line.slice(colonIdx + 1).trim();
+
+        // Continuation: next line is deeper-indented than this one
+        // (top-level context fields are at 2 spaces; sub-fields of
+        // an object/array value or of an error block are at 4+).
+        // The value text is passed verbatim to the sub-parser
+        // (e.g. parseErrorBlock) which handles its own indent.
+        const currentIndent = line.length - line.trimStart().length;
+        while (i + 1 < current.body.length) {
+          const next = current.body[i + 1] ?? "";
+          const nextIndent = next.length - next.trimStart().length;
+          if (nextIndent > currentIndent) {
+            valueText += "\n" + next;
+            i++;
+          } else {
+            break;
+          }
+        }
+
+        if (key === "error") {
+          error = parseErrorBlock(valueText);
+        } else if (valueText === "true" || valueText === "false") {
+          context[key] = valueText === "true";
+        } else if (/^-?\d+(\.\d+)?$/.test(valueText)) {
+          context[key] = Number(valueText);
+        } else {
+          context[key] = valueText;
+        }
+        i++;
+      }
+
+      const entry: LogEntry = {
+        timestamp: timestamp as string,
+        level,
+        scope: scope as string,
+        message: message as string,
+        context,
+      };
+      if (error) entry.error = error;
+      entries.push(entry);
+    }
+    current = null;
+  };
+
+  for (const line of lines) {
+    if (HEADER_RE.test(line)) {
+      flush();
+      current = { header: line, body: [] };
+    } else if (current) {
+      current.body.push(line);
+    } else if (line.trim().length > 0) {
+      // Standalone non-header line (e.g. session marker). Capture as its own entry.
+      entries.push({
+        timestamp: new Date(0).toISOString(),
+        level: "info",
+        scope: "system",
+        message: line,
+        context: {},
+      });
+    }
+  }
+  flush();
+
+  return entries;
+}
+
+function parseErrorBlock(text: string): SerializedError {
+  // The error block is formatted with sub-fields at 4-space indent
+  // and serialized errors are flat (no multi-line values, since
+  // stacks are compressed to a single line in serializeError). Strip
+  // up to 4 leading spaces from each line and parse as "key: value".
+  const lines = text.split("\n");
+  const err: SerializedError = { name: "Error", message: "" };
+  for (const raw of lines) {
+    const stripped = raw.replace(/^ {0,4}/, "");
+    const m = /^(\w+):\s*(.*)$/.exec(stripped);
+    if (!m) continue;
+    const key = m[1] ?? "";
+    const val = m[2] ?? "";
+    if (key === "name") err.name = val;
+    else if (key === "message") err.message = val;
+    else if (key === "stack") err.stack = val;
+    else if (key === "cause") {
+      // Nested cause: serializeError uses "name | message" form on
+      // a single line, so split it back into a SerializedError.
+      const causeMatch = /^([^|]+?)\s*\|\s*(.*)$/.exec(val);
+      if (causeMatch) {
+        err.cause = {
+          name: causeMatch[1]?.trim() ?? "Error",
+          message: causeMatch[2]?.trim() ?? "",
+        };
+      } else {
+        err.cause = { name: "Error", message: val };
+      }
+    }
+  }
+  return err;
+}
+
+/**
+ * Subscribe to in-process log emissions. Returns an unsubscribe function.
+ * Used by the SSE stream and by tests.
+ */
+export function subscribe(fn: LogSubscriber): () => void {
+  ensureLoggerInitialized();
+  let subs = (globalThis as Record<symbol, unknown>)[SUBSCRIBER_KEY] as
+    | Set<LogSubscriber>
+    | undefined;
+  if (!subs) {
+    subs = new Set();
+    (globalThis as Record<symbol, unknown>)[SUBSCRIBER_KEY] = subs;
+  }
+  subs.add(fn);
+  return () => {
+    subs?.delete(fn);
+  };
+}
+
+/**
+ * Return the current log file path. Useful for the /api/logs endpoint
+ * and for tests.
+ */
+export function getLogPath(): string {
+  return getLogFilePath();
+}
+
+// Test/utility: reset logger state (used by the test suite).
+export function _resetForTests(): void {
+  (globalThis as Record<symbol, unknown>)[GLOBAL_LOGGER_KEY] = false;
+  (globalThis as Record<symbol, unknown>)[SUBSCRIBER_KEY] = undefined;
+}
