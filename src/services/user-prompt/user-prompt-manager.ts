@@ -78,15 +78,27 @@ export class UserPromptManager {
 
   getLastUncapturedPrompt(sessionId: string): UserPrompt | null {
     const stmt = this.db.prepare(`
-      SELECT * FROM user_prompts 
+      SELECT * FROM user_prompts
       WHERE session_id = ? AND captured = 0
-      ORDER BY created_at DESC 
+      ORDER BY created_at DESC
       LIMIT 1
     `);
 
     const row = stmt.get(sessionId) as any;
     if (!row) return null;
 
+    return this.rowToPrompt(row);
+  }
+
+  getLastUncapturedPromptAny(): UserPrompt | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM user_prompts
+      WHERE captured = 0
+      ORDER BY created_at DESC
+      LIMIT 1
+    `);
+    const row = stmt.get() as any;
+    if (!row) return null;
     return this.rowToPrompt(row);
   }
 

@@ -14,6 +14,16 @@ const state = {
   selectedMemories: new Set(),
   autoRefreshInterval: null,
   userProfile: null,
+  // Logs panel state
+  logs: {
+    entries: [],
+    maxEntries: 500,
+    paused: false,
+    eventSource: null,
+    minLevel: "info",
+    scopeFilter: "",
+    connected: false,
+  },
 };
 
 marked.setOptions({
@@ -1114,15 +1124,30 @@ function switchView(view) {
     document.getElementById("tab-project").classList.add("active");
     document.getElementById("project-section").classList.remove("hidden");
     document.getElementById("profile-section").classList.add("hidden");
+    document.getElementById("logs-section").classList.add("hidden");
     document.querySelector(".controls").classList.remove("hidden");
     document.querySelector(".add-section").classList.remove("hidden");
+    stopLogsStream();
   } else if (view === "profile") {
     document.getElementById("tab-profile").classList.add("active");
     document.getElementById("project-section").classList.add("hidden");
     document.getElementById("profile-section").classList.remove("hidden");
+    document.getElementById("logs-section").classList.add("hidden");
     document.querySelector(".controls").classList.add("hidden");
     document.querySelector(".add-section").classList.add("hidden");
+    stopLogsStream();
     loadUserProfile();
+  } else if (view === "logs") {
+    document.getElementById("tab-logs").classList.add("active");
+    document.getElementById("project-section").classList.add("hidden");
+    document.getElementById("profile-section").classList.add("hidden");
+    document.getElementById("logs-section").classList.remove("hidden");
+    document.querySelector(".controls").classList.add("hidden");
+    document.querySelector(".add-section").classList.add("hidden");
+    if (state.logs.entries.length === 0) {
+      loadInitialLogs();
+    }
+    startLogsStream();
   }
 }
 
@@ -1132,9 +1157,218 @@ function escapeHtml(text) {
   return div.innerHTML;
 }
 
+// ---------------------------------------------------------------------------
+// Logs panel
+// ---------------------------------------------------------------------------
+
+function formatLogTime(iso) {
+  try {
+    const d = new Date(iso);
+    return d.toISOString().slice(11, 23);
+  } catch {
+    return "--:--:--.---";
+  }
+}
+
+function renderLogEntry(entry) {
+  const div = document.createElement("div");
+  div.className = "log-entry";
+
+  const header = document.createElement("div");
+  header.className = "log-header";
+  header.innerHTML = `
+    <span class="log-time">${escapeHtml(formatLogTime(entry.timestamp))}</span>
+    <span class="log-level log-level-${escapeHtml(entry.level)}">${escapeHtml(entry.level)}</span>
+    <span class="log-scope">[${escapeHtml(entry.scope)}]</span>
+    <span class="log-message">${escapeHtml(entry.message)}</span>
+  `;
+  div.appendChild(header);
+
+  // Context fields, excluding the level/scope which we already show.
+  const contextEntries = Object.entries(entry.context || {}).filter(
+    ([k]) => k !== "level" && k !== "scope",
+  );
+  if (contextEntries.length > 0) {
+    const ctx = document.createElement("div");
+    ctx.className = "log-context";
+    ctx.textContent = contextEntries
+      .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+      .join("\n");
+    div.appendChild(ctx);
+  }
+
+  if (entry.error) {
+    const err = document.createElement("div");
+    err.className = "log-error";
+    const parts = [];
+    if (entry.error.name) parts.push(entry.error.name);
+    if (entry.error.message) parts.push(entry.error.message);
+    if (entry.error.stack) parts.push(entry.error.stack);
+    if (entry.error.cause) {
+      const cause = entry.error.cause;
+      parts.push(
+        `caused by: ${cause.name ?? "Error"}${cause.message ? ": " + cause.message : ""}`,
+      );
+    }
+    err.textContent = parts.join("\n");
+    div.appendChild(err);
+  }
+
+  return div;
+}
+
+function appendLogEntries(entries) {
+  const list = document.getElementById("logs-list");
+  if (!list) return;
+  const wasAtBottom =
+    list.scrollHeight - list.scrollTop - list.clientHeight < 20;
+  for (const entry of entries) {
+    list.appendChild(renderLogEntry(entry));
+  }
+  // Trim oldest if we exceed cap.
+  while (list.childElementCount > state.logs.maxEntries) {
+    list.removeChild(list.firstChild);
+  }
+  if (wasAtBottom) list.scrollTop = list.scrollHeight;
+}
+
+function setLogsStatus(text, kind = "") {
+  const el = document.getElementById("logs-status");
+  if (!el) return;
+  el.textContent = text;
+  el.classList.remove("connected", "error");
+  if (kind) el.classList.add(kind);
+}
+
+function buildLogsStreamUrl() {
+  const params = new URLSearchParams();
+  params.set("minLevel", state.logs.minLevel);
+  if (state.logs.scopeFilter) params.set("scope", state.logs.scopeFilter);
+  return `/api/logs/stream?${params.toString()}`;
+}
+
+function startLogsStream() {
+  stopLogsStream();
+  if (typeof EventSource === "undefined") {
+    setLogsStatus("EventSource not supported by this browser", "error");
+    return;
+  }
+  const es = new EventSource(buildLogsStreamUrl());
+  es.addEventListener("ready", (ev) => {
+    state.logs.connected = true;
+    setLogsStatus("connected", "connected");
+  });
+  es.addEventListener("entry", (ev) => {
+    if (state.logs.paused) return;
+    try {
+      const entry = JSON.parse(ev.data);
+      state.logs.entries.push(entry);
+      appendLogEntries([entry]);
+    } catch (err) {
+      console.error("Failed to parse log entry", err);
+    }
+  });
+  es.onerror = () => {
+    state.logs.connected = false;
+    setLogsStatus("disconnected (will retry)", "error");
+  };
+  state.logs.eventSource = es;
+}
+
+function stopLogsStream() {
+  if (state.logs.eventSource) {
+    state.logs.eventSource.close();
+    state.logs.eventSource = null;
+  }
+  state.logs.connected = false;
+}
+
+async function loadInitialLogs() {
+  const params = new URLSearchParams();
+  params.set("tail", String(state.logs.maxEntries));
+  params.set("minLevel", state.logs.minLevel);
+  if (state.logs.scopeFilter) params.set("scope", state.logs.scopeFilter);
+  const result = await fetchAPI(`/api/logs?${params.toString()}`);
+  if (!result.success) {
+    setLogsStatus(`load failed: ${result.error ?? "unknown"}`, "error");
+    return;
+  }
+  state.logs.entries = result.data.entries;
+  const list = document.getElementById("logs-list");
+  if (list) {
+    list.innerHTML = "";
+    appendLogEntries(result.data.entries);
+  }
+}
+
+async function triggerAutoCapture() {
+  const btn = document.getElementById("logs-trigger-btn");
+  if (btn) btn.disabled = true;
+  setLogsStatus("triggering auto-capture…");
+  try {
+    const result = await fetchAPI("/api/auto-capture/trigger", {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (result.success) {
+      showToast(result.data.message, "success");
+      setLogsStatus(`trigger armed: ${result.data.promptId ?? "?"}`);
+    } else {
+      showToast(result.error || "trigger failed", "error");
+      setLogsStatus(`trigger failed: ${result.error ?? "unknown"}`, "error");
+    }
+  } catch (err) {
+    showToast(String(err), "error");
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function clearLogsDisplay() {
+  const list = document.getElementById("logs-list");
+  if (list) list.innerHTML = "";
+  state.logs.entries = [];
+}
+
+function toggleLogsPause() {
+  state.logs.paused = !state.logs.paused;
+  const btn = document.getElementById("logs-toggle-btn");
+  if (btn) {
+    btn.classList.toggle("paused", state.logs.paused);
+    btn.innerHTML = state.logs.paused
+      ? '<i data-lucide="play" class="icon"></i> Resume'
+      : '<i data-lucide="pause" class="icon"></i> Pause';
+    if (typeof lucide !== "undefined") lucide.createIcons();
+  }
+}
+
+function setupLogsPanel() {
+  document.getElementById("logs-min-level")?.addEventListener("change", (e) => {
+    state.logs.minLevel = e.target.value;
+    if (state.logs.connected) {
+      // Restart stream with new level filter.
+      startLogsStream();
+      clearLogsDisplay();
+      loadInitialLogs();
+    }
+  });
+  document.getElementById("logs-scope-filter")?.addEventListener("change", (e) => {
+    state.logs.scopeFilter = e.target.value.trim();
+    if (state.logs.connected) {
+      startLogsStream();
+      clearLogsDisplay();
+      loadInitialLogs();
+    }
+  });
+  document.getElementById("logs-toggle-btn")?.addEventListener("click", toggleLogsPause);
+  document.getElementById("logs-clear-btn")?.addEventListener("click", clearLogsDisplay);
+  document.getElementById("logs-trigger-btn")?.addEventListener("click", triggerAutoCapture);
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("tab-project").addEventListener("click", () => switchView("project"));
   document.getElementById("tab-profile").addEventListener("click", () => switchView("profile"));
+  document.getElementById("tab-logs").addEventListener("click", () => switchView("logs"));
   document.getElementById("refresh-profile-btn")?.addEventListener("click", refreshProfile);
   document.getElementById("changelog-close")?.addEventListener("click", () => {
     document.getElementById("changelog-modal").classList.add("hidden");
@@ -1198,6 +1432,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("edit-modal").addEventListener("click", (e) => {
     if (e.target.id === "edit-modal") closeModal();
   });
+
+  setupLogsPanel();
 
   await loadTags();
   await loadMemories();

@@ -2,7 +2,7 @@ import { embeddingService } from "./embedding.js";
 import { shardManager } from "./sqlite/shard-manager.js";
 import { vectorSearch } from "./sqlite/vector-search.js";
 import { connectionManager } from "./sqlite/connection-manager.js";
-import { log } from "./logger.js";
+import { log, readLastEntries, parseEntries, getLogPath, subscribe, logger, type LogEntry, type LogLevel } from "./logger.js";
 import { CONFIG } from "../config.js";
 import type { MemoryType } from "../types/index.js";
 import { userPromptManager } from "./user-prompt/user-prompt-manager.js";
@@ -1087,6 +1087,202 @@ export async function handleRunTagMigrationBatch(
       data: { processed: migrationProgress.processed, total: migrationProgress.total, hasMore },
     };
   } catch (error) {
+    return { success: false, error: String(error) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Logs endpoint
+// ---------------------------------------------------------------------------
+
+const LEVEL_RANK: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
+
+function entryMatchesFilters(entry: LogEntry, minLevel: LogLevel, scopeFilter: string | null): boolean {
+  if (LEVEL_RANK[entry.level] < LEVEL_RANK[minLevel]) return false;
+  if (scopeFilter && !entry.scope.startsWith(scopeFilter)) return false;
+  return true;
+}
+
+/**
+ * GET /api/logs?tail=200&minLevel=info&scope=auto-capture&since=ISO
+ *
+ * Returns the most recent N parsed log entries (after filters).
+ * `tail` defaults to 100, capped at 5000. `minLevel` is one of
+ * debug|info|warn|error, default info. `scope` is an optional prefix
+ * filter. `since` is an optional ISO timestamp; only entries with
+ * timestamp >= since are returned.
+ */
+export function handleGetLogs(params: {
+  tail?: number;
+  minLevel?: string;
+  scope?: string;
+  since?: string;
+}): ApiResponse<{ entries: LogEntry[]; total: number; path: string }> {
+  try {
+    const tail = Math.max(1, Math.min(params.tail ?? 100, 5000));
+    const minLevel = (params.minLevel ?? "info") as LogLevel;
+    if (!(minLevel in LEVEL_RANK)) {
+      return { success: false, error: `Invalid minLevel: ${minLevel}` };
+    }
+    const scopeFilter = params.scope?.trim() || null;
+    const since = params.since ? new Date(params.since).getTime() : null;
+    if (params.since && Number.isNaN(since)) {
+      return { success: false, error: `Invalid since timestamp: ${params.since}` };
+    }
+
+    // Read more than we need so post-filter still returns tail entries.
+    const raw = readLastEntries(Math.max(tail * 3, 500));
+    const filtered = raw.filter(
+      (e) =>
+        entryMatchesFilters(e, minLevel, scopeFilter) &&
+        (since === null || new Date(e.timestamp).getTime() >= since),
+    );
+    const entries = filtered.slice(-tail);
+
+    return {
+      success: true,
+      data: { entries, total: filtered.length, path: getLogPath() },
+    };
+  } catch (error) {
+    log("handleGetLogs: error", { error });
+    return { success: false, error: String(error) };
+  }
+}
+
+/**
+ * GET /api/logs/stream?minLevel=info&scope=auto-capture
+ *
+ * Server-Sent Events stream of new log entries. Each event is one
+ * JSON-encoded LogEntry. Closes when the client disconnects.
+ *
+ * Returns the Response directly (not wrapped in ApiResponse) because
+ * SSE needs a streaming Response with specific headers.
+ */
+export function handleGetLogsStream(params: {
+  minLevel?: string;
+  scope?: string;
+}): { response: Response; close: () => void } {
+  const minLevel = (params.minLevel ?? "info") as LogLevel;
+  const scopeFilter = params.scope?.trim() || null;
+
+  let unsub: (() => void) | null = null;
+  let heartbeat: ReturnType<typeof setInterval> | null = null;
+
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      const enc = new TextEncoder();
+      const send = (event: string, data: unknown): void => {
+        try {
+          controller.enqueue(enc.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+        } catch {
+          // Controller closed underneath us; ignore.
+        }
+      };
+
+      // Send a hello event so the client knows the stream is alive.
+      send("ready", { minLevel, scope: scopeFilter, path: getLogPath() });
+
+      unsub = subscribe((entry) => {
+        if (!entryMatchesFilters(entry, minLevel, scopeFilter)) return;
+        send("entry", entry);
+      });
+
+      // Heartbeat every 15s to keep proxies from closing the connection.
+      heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(enc.encode(`: keep-alive\n\n`));
+        } catch {
+          // ignore
+        }
+      }, 15000);
+    },
+    cancel() {
+      if (unsub) {
+        unsub();
+        unsub = null;
+      }
+      if (heartbeat) {
+        clearInterval(heartbeat);
+        heartbeat = null;
+      }
+    },
+  });
+
+  const response = new Response(stream, {
+    status: 200,
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "Access-Control-Allow-Origin": "*",
+    },
+  });
+
+  return {
+    response,
+    close: () => {
+      if (unsub) unsub();
+      if (heartbeat) clearInterval(heartbeat);
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Auto-capture trigger (debugging aid)
+// ---------------------------------------------------------------------------
+
+/**
+ * POST /api/auto-capture/trigger
+ *
+ * Forces the auto-capture pipeline to run on the next idle event
+ * instead of waiting 10 seconds. If a sessionID is provided in the
+ * body, that session's most recent uncaptured prompt is targeted.
+ * Otherwise the most recent uncaptured prompt across all sessions
+ * is targeted.
+ *
+ * This is a "kick the daemon" button — it does not run the capture
+ * synchronously (the auto-capture path needs the plugin's full ctx,
+ * which isn't exposed to the web server). It marks the prompt as
+ * eligible and returns immediately. Watch the logs to see the result.
+ */
+export function handleTriggerAutoCapture(params: {
+  sessionID?: string;
+}): ApiResponse<{ promptId?: string; message: string }> {
+  try {
+    let prompt;
+    if (params.sessionID) {
+      prompt = userPromptManager.getLastUncapturedPrompt(params.sessionID);
+    } else {
+      prompt = userPromptManager.getLastUncapturedPromptAny();
+    }
+    if (!prompt) {
+      return {
+        success: false,
+        error: params.sessionID
+          ? `No uncaptured prompt found for session ${params.sessionID}`
+          : "No uncaptured prompts found across any session",
+      };
+    }
+
+    const claimed = userPromptManager.claimPrompt(prompt.id);
+    if (!claimed) {
+      return { success: false, error: "Prompt was already claimed by another capture" };
+    }
+
+    logger.info("auto-capture", "manual trigger armed", {
+      promptId: prompt.id,
+      sessionId: prompt.sessionId,
+    });
+    return {
+      success: true,
+      data: {
+        promptId: prompt.id,
+        message:
+          "Trigger armed. The next session.idle event (or 10s, whichever comes first) will run auto-capture against this prompt. Watch the logs.",
+      },
+    };
+  } catch (error) {
+    log("handleTriggerAutoCapture: error", { error });
     return { success: false, error: String(error) };
   }
 }
