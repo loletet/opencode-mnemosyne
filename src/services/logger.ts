@@ -586,7 +586,6 @@ export function parseEntries(text: string): LogEntry[] {
 }
 
 function stripAnsi(text: string): string {
-  return text;
   return text.replace(ANSI_RE, "");
 }
 
