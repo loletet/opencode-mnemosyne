@@ -1,6 +1,10 @@
-import { describe, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
+import { ensureDistPluginBuilt } from "./dist-build-helper.js";
 
 describe("OpenCode plugin loader bundle boundary", () => {
+  beforeAll(() => {
+    ensureDistPluginBuilt();
+  });
   it("does not pull local embedding transformer internals into the plugin-loader bundle", async () => {
     const result = await Bun.build({
       entrypoints: ["./dist/plugin.js"],
