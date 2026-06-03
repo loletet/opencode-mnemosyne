@@ -1,3 +1,7 @@
+import { describe, expect, it } from "bun:test";
+import { ensureDistBuild } from "./helpers/ensure-dist";
+
+ensureDistBuild();
 import { beforeAll, describe, expect, it } from "bun:test";
 import { ensureDistPluginBuilt } from "./dist-build-helper.js";
 

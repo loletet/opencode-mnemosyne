@@ -5,6 +5,8 @@
  * All assertions here must PASS. This file guards the fixed contract from regressions.
  */
 
+import { describe, expect, it } from "bun:test";
+import { ensureDistBuild } from "./helpers/ensure-dist";
 import { beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
 import { ensureDistPluginBuilt } from "./dist-build-helper.js";
@@ -18,6 +20,8 @@ async function loadDistPlugin(): Promise<unknown> {
   const modUrl = new URL("../dist/plugin.js", import.meta.url).href;
   return import(modUrl);
 }
+
+ensureDistBuild();
 
 describe("OpenCode 1.3.x plugin-loader contract", () => {
   beforeAll(() => {
