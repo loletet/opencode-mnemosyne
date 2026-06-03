@@ -1186,7 +1186,7 @@ function renderLogEntry(entry) {
 
   // Context fields, excluding the level/scope which we already show.
   const contextEntries = Object.entries(entry.context || {}).filter(
-    ([k]) => k !== "level" && k !== "scope",
+    ([k]) => k !== "level" && k !== "scope"
   );
   if (contextEntries.length > 0) {
     const ctx = document.createElement("div");
@@ -1206,9 +1206,7 @@ function renderLogEntry(entry) {
     if (entry.error.stack) parts.push(entry.error.stack);
     if (entry.error.cause) {
       const cause = entry.error.cause;
-      parts.push(
-        `caused by: ${cause.name ?? "Error"}${cause.message ? ": " + cause.message : ""}`,
-      );
+      parts.push(`caused by: ${cause.name ?? "Error"}${cause.message ? ": " + cause.message : ""}`);
     }
     err.textContent = parts.join("\n");
     div.appendChild(err);
@@ -1220,8 +1218,7 @@ function renderLogEntry(entry) {
 function appendLogEntries(entries) {
   const list = document.getElementById("logs-list");
   if (!list) return;
-  const wasAtBottom =
-    list.scrollHeight - list.scrollTop - list.clientHeight < 20;
+  const wasAtBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 20;
   for (const entry of entries) {
     list.appendChild(renderLogEntry(entry));
   }
