@@ -279,7 +279,8 @@ function formatEntry(entry: LogEntry): string {
   // Each entry is preceded by a blank line so `tail -f` is scannable
   // and `wc -l` is roughly meaningful. The parser splits on the
   // "[ISO" header pattern, so blank lines are purely cosmetic.
-  return "\n" + lines.join("\n") + "\n";
+  // return "\n" + lines.join("\n") + "\n";
+  return lines.join("\n");
 }
 
 // ---------------------------------------------------------------------------
