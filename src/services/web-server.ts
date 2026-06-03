@@ -75,6 +75,7 @@ export class WebServer {
       this.server = Bun.serve({
         port: this.config.port,
         hostname: this.config.host,
+        idleTimeout: 120,
         fetch: this.handleRequest.bind(this),
       });
       this.isOwner = true;

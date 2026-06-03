@@ -1200,14 +1200,14 @@ export function handleGetLogsStream(params: { minLevel?: string; scope?: string 
         send("entry", entry);
       });
 
-      // Heartbeat every 15s to keep proxies from closing the connection.
+      // Heartbeat below Bun's default 10s idle timeout so SSE stays open.
       heartbeat = setInterval(() => {
         try {
           controller.enqueue(enc.encode(`: keep-alive\n\n`));
         } catch {
           // ignore
         }
-      }, 15000);
+      }, 5000);
     },
     cancel() {
       if (unsub) {

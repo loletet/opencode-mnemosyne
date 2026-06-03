@@ -158,158 +158,88 @@ function formatValue(v, indent) {
     }
     return String(v);
 }
-
-const ANSI = {
-  reset: "\x1b[0m",
-  dim: "\x1b[2m",
-  bold: "\x1b[1m",
-  gray: "\x1b[90m",
-  white: "\x1b[97m",
-  red: "\x1b[31m",
-  yellow: "\x1b[33m",
-  green: "\x1b[32m",
-  cyan: "\x1b[36m",
-  magenta: "\x1b[35m",
-};
-
-const LEVEL_COLOR = {
-  trace: ANSI.gray,
-  debug: ANSI.cyan,
-  info: ANSI.green,
-  warn: ANSI.yellow,
-  error: ANSI.red,
-  fatal: ANSI.bold + ANSI.red,
-};
-
-function paint(text, color, enabled) {
-  return enabled ? color + text + ANSI.reset : text;
-}
-
-function isEmpty(value) {
-  return value === undefined || value === null || value === "";
-}
-
-function isSimple(value) {
-  return (
-    typeof value === "string" ||
-    typeof value === "number" ||
-    typeof value === "boolean"
-  );
-}
-
-function formatInlineValue(value) {
-  if (Array.isArray(value)) {
-    return value.every(isSimple) ? value.join(",") : null;
-  }
-
-  if (isSimple(value)) {
-    const text = String(value);
-    return text.includes("\n") ? null : text;
-  }
-
-  return null;
-}
-
-function formatBlockValue(value) {
-  if (value instanceof Error) {
-    return value.stack || `${value.name}: ${value.message}`;
-  }
-
-  if (typeof value === "string") {
-    return value;
-  }
-
-  return JSON.stringify(value, null, 2);
-}
-
-function indent(text, spaces = 4) {
-  const pad = " ".repeat(spaces);
-  return String(text)
-    .split("\n")
-    .map(line => pad + line)
-    .join("\n");
-}
-
-function formatEntry(entry, options = {}) {
-  const colors =
-    options.colors ??
-    Boolean(process.stdout?.isTTY && !process.env.NO_COLOR);
-
-  const level = String(entry.level ?? "info").toLowerCase();
-
-  const label =
-    (typeof LEVEL_LABEL !== "undefined" && LEVEL_LABEL[level]) ||
-    level.toUpperCase();
-
-  const levelText = paint(label.padEnd(5), LEVEL_COLOR[level] || "", colors);
-  //const timeText = paint(entry.timestamp, ANSI.gray, colors);
-  const timeText = paint(entry.timestamp, ANSI.white, colors);
-  const scopeText = paint(entry.scope, ANSI.cyan, colors);
-  const messageText = paint(entry.message, ANSI.bold, colors);
-
-  const inline = [];
-  const multiline = [];
-
-  for (const [key, value] of Object.entries(entry.context ?? {})) {
-    if (isEmpty(value)) continue;
-
-    const inlineValue = formatInlineValue(value);
-
-    if (inlineValue === null) {
-      multiline.push([key, value]);
-    } else {
-      inline.push(
-        `${paint(key, ANSI.gray, colors)}=${paint(inlineValue, ANSI.magenta, colors)}`
-      );
-    }
-  }
-
-  if (entry.error) {
-    multiline.push(["error", entry.error]);
-  }
-
-  const header = [
-    levelText,
-    timeText,
-    `[${scopeText}]`,
-    messageText,
-    ...inline,
-  ].join(" ");
-
-  const lines = [header];
-
-  for (const [key, value] of multiline) {
-    lines.push(`  ${paint(key, ANSI.gray, colors)}:`);
-    lines.push(indent(formatBlockValue(value), 4));
-  }
-
-  // Important: no trailing newline here.
-  return lines.join("\n");
-}
-
-function _formatEntry(entry) {
-    const header = `[${entry.timestamp}] ${LEVEL_LABEL[entry.level]} [${entry.scope}] ${entry.message}`;
-    const lines = [header];
-    // Context fields, normalized: level and scope go first for grep-friendliness.
-    const ctx = { level: entry.level, scope: entry.scope, ...entry.context };
-    // Drop empties to avoid noise.
-    for (const key of Object.keys(ctx)) {
-        const value = ctx[key];
-        if (value === undefined || value === null || value === "") {
-            delete ctx[key];
+function formatEntry(entry) {
+    const colors = Boolean(process.stdout?.isTTY && !process.env.NO_COLOR);
+    const levelText = paint(LEVEL_LABEL[entry.level].padEnd(5), LEVEL_COLOR[entry.level], colors);
+    const timeText = paint(entry.timestamp, ANSI.white, colors);
+    const scopeText = paint(entry.scope, ANSI.cyan, colors);
+    const messageText = paint(entry.message, ANSI.bold, colors);
+    const inline = [];
+    const multiline = [];
+    for (const [key, value] of Object.entries(entry.context ?? {})) {
+        if (isEmpty(value))
+            continue;
+        const inlineValue = formatInlineValue(value);
+        if (inlineValue === null) {
+            multiline.push([key, value]);
+        }
+        else {
+            inline.push(`${paint(key, ANSI.gray, colors)}=${paint(inlineValue, ANSI.magenta, colors)}`);
         }
     }
-    for (const key of Object.keys(ctx)) {
-        lines.push("  " + key + ": " + formatValue(ctx[key], "  "));
-    }
     if (entry.error) {
-        lines.push("  error: " + formatValue(entry.error, "  "));
+        multiline.push(["error", entry.error]);
     }
-    // Each entry is preceded by a blank line so `tail -f` is scannable
-    // and `wc -l` is roughly meaningful. The parser splits on the
-    // "[ISO" header pattern, so blank lines are purely cosmetic.
-    // return "\n" + lines.join("\n") + "\n";
+    const header = [levelText, timeText, `[${scopeText}]`, messageText, ...inline].join(" ");
+    const lines = [header];
+    for (const [key, value] of multiline) {
+        lines.push(`  ${paint(key, ANSI.gray, colors)}:`);
+        lines.push(indent(formatBlockValue(value), 4));
+    }
     return lines.join("\n");
+}
+const ANSI = {
+    reset: "\x1b[0m",
+    dim: "\x1b[2m",
+    bold: "\x1b[1m",
+    gray: "\x1b[90m",
+    white: "\x1b[97m",
+    red: "\x1b[31m",
+    yellow: "\x1b[33m",
+    green: "\x1b[32m",
+    cyan: "\x1b[36m",
+    magenta: "\x1b[35m",
+};
+const LEVEL_COLOR = {
+    debug: ANSI.cyan,
+    info: ANSI.green,
+    warn: ANSI.yellow,
+    error: ANSI.red,
+};
+function paint(text, color, enabled) {
+    return enabled ? color + text + ANSI.reset : text;
+}
+function isEmpty(value) {
+    return value === undefined || value === null || value === "";
+}
+function isSimple(value) {
+    return typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+}
+function formatInlineValue(value) {
+    if (Array.isArray(value)) {
+        return value.every(isSimple) ? value.join(",") : null;
+    }
+    if (isSimple(value)) {
+        const text = String(value);
+        return text.includes("\n") ? null : text;
+    }
+    return null;
+}
+function formatBlockValue(value) {
+    if (value instanceof Error) {
+        return value.stack || `${value.name}: ${value.message}`;
+    }
+    if (typeof value === "string") {
+        return value;
+    }
+    return JSON.stringify(value, null, 2);
+}
+function indent(text, spaces = 4) {
+    const pad = " ".repeat(spaces);
+    return String(text)
+        .split("\n")
+        .map((line) => pad + line)
+        .join("\n");
 }
 // ---------------------------------------------------------------------------
 // Core emit
@@ -421,7 +351,9 @@ function readFileSyncSafely(path) {
         return "";
     }
 }
-const HEADER_RE = /^\[([^\]]+)\] (DEBUG|INFO|WARN|ERROR) \[([^\]]+)\] (.*)$/;
+const ANSI_RE = /\x1b\[[0-9;]*m/g;
+const OLD_HEADER_RE = /^\[([^\]]+)\] (DEBUG|INFO|WARN|ERROR) \[([^\]]+)\] (.*)$/;
+const PRETTY_HEADER_RE = /^(DEBUG|INFO|WARN|ERROR)\s+(\S+)\s+\[([^\]]+)\]\s+(.*)$/;
 /**
  * Parse the on-disk text into structured entries. Entries are
  * delimited by lines that match the Mnemosyne header pattern
@@ -436,8 +368,8 @@ export function parseEntries(text) {
     const flush = () => {
         if (!current)
             return;
-        const m = HEADER_RE.exec(current.header);
-        if (!m) {
+        const parsed = parseHeader(current.header);
+        if (!parsed) {
             entries.push({
                 timestamp: new Date(0).toISOString(),
                 level: "info",
@@ -447,12 +379,8 @@ export function parseEntries(text) {
             });
         }
         else {
-            const timestamp = m[1] ?? new Date().toISOString();
-            const levelStr = m[2] ?? "INFO";
-            const scope = m[3] ?? "app";
-            const message = m[4] ?? "";
-            const level = levelStr.toLowerCase();
-            const context = {};
+            const { timestamp, level, scope, message } = parsed;
+            const context = { ...parsed.context };
             let error;
             let i = 0;
             while (i < current.body.length) {
@@ -461,21 +389,22 @@ export function parseEntries(text) {
                     i++;
                     continue;
                 }
-                const colonIdx = line.indexOf(":");
+                const cleanLine = stripAnsi(line);
+                const colonIdx = cleanLine.indexOf(":");
                 if (colonIdx === -1) {
                     i++;
                     continue;
                 }
-                const key = line.slice(0, colonIdx).trim();
-                let valueText = line.slice(colonIdx + 1).trim();
+                const key = cleanLine.slice(0, colonIdx).trim();
+                let valueText = cleanLine.slice(colonIdx + 1).trim();
                 // Continuation: next line is deeper-indented than this one
                 // (top-level context fields are at 2 spaces; sub-fields of
                 // an object/array value or of an error block are at 4+).
                 // The value text is passed verbatim to the sub-parser
                 // (e.g. parseErrorBlock) which handles its own indent.
-                const currentIndent = line.length - line.trimStart().length;
+                const currentIndent = cleanLine.length - cleanLine.trimStart().length;
                 while (i + 1 < current.body.length) {
-                    const next = current.body[i + 1] ?? "";
+                    const next = stripAnsi(current.body[i + 1] ?? "");
                     const nextIndent = next.length - next.trimStart().length;
                     if (nextIndent > currentIndent) {
                         valueText += "\n" + next;
@@ -500,10 +429,10 @@ export function parseEntries(text) {
                 i++;
             }
             const entry = {
-                timestamp: timestamp,
+                timestamp,
                 level,
-                scope: scope,
-                message: message,
+                scope,
+                message,
                 context,
             };
             if (error)
@@ -513,7 +442,7 @@ export function parseEntries(text) {
         current = null;
     };
     for (const line of lines) {
-        if (HEADER_RE.test(line)) {
+        if (parseHeader(line)) {
             flush();
             current = { header: line, body: [] };
         }
@@ -534,7 +463,56 @@ export function parseEntries(text) {
     flush();
     return entries;
 }
+function stripAnsi(text) {
+    return text.replace(ANSI_RE, "");
+}
+function parseHeader(header) {
+    const clean = stripAnsi(header);
+    const old = OLD_HEADER_RE.exec(clean);
+    if (old) {
+        return {
+            timestamp: old[1] ?? new Date().toISOString(),
+            level: (old[2] ?? "INFO").toLowerCase(),
+            scope: old[3] ?? "app",
+            message: old[4] ?? "",
+            context: {},
+        };
+    }
+    const pretty = PRETTY_HEADER_RE.exec(clean);
+    if (!pretty)
+        return null;
+    const level = (pretty[1] ?? "INFO").toLowerCase();
+    const timestamp = pretty[2] ?? new Date().toISOString();
+    const scope = pretty[3] ?? "app";
+    const { message, context } = parsePrettyMessageAndInlineContext(pretty[4] ?? "");
+    return { timestamp, level, scope, message, context };
+}
+function parsePrettyMessageAndInlineContext(text) {
+    const parts = text.split(" ");
+    const context = {};
+    while (parts.length > 0) {
+        const last = parts[parts.length - 1] ?? "";
+        const match = /^([A-Za-z_][\w.-]*)=(.*)$/.exec(last);
+        if (!match)
+            break;
+        parts.pop();
+        context[match[1] ?? ""] = parseScalar(match[2] ?? "");
+    }
+    return { message: parts.join(" "), context };
+}
+function parseScalar(valueText) {
+    if (valueText === "true" || valueText === "false")
+        return valueText === "true";
+    if (/^-?\d+(\.\d+)?$/.test(valueText))
+        return Number(valueText);
+    return valueText;
+}
 function parseErrorBlock(text) {
+    const trimmed = text.trim();
+    if (trimmed.startsWith("{")) {
+        const parsed = JSON.parse(trimmed);
+        return parsed;
+    }
     // The error block is formatted with sub-fields at 4-space indent
     // and serialized errors are flat (no multi-line values, since
     // stacks are compressed to a single line in serializeError). Strip

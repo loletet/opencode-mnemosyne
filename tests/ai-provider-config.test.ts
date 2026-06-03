@@ -174,8 +174,8 @@ describe("AI provider config", () => {
     const afterLog = readFileSync(logFile, "utf-8");
     const appendedLog = afterLog.slice(beforeLog.length);
 
-    expect(appendedLog).toContain("provider: openai-chat");
-    expect(appendedLog).toContain("model: gpt-5-nano");
+    expect(appendedLog).toContain("provider=openai-chat");
+    expect(appendedLog).toContain("model=gpt-5-nano");
   });
 
   it("logs provider and model context for response-body API errors", async () => {
@@ -203,8 +203,8 @@ describe("AI provider config", () => {
     const afterLog = readFileSync(logFile, "utf-8");
     const appendedLog = afterLog.slice(beforeLog.length);
 
-    expect(appendedLog).toContain("provider: openai-chat");
-    expect(appendedLog).toContain("model: gpt-5-nano");
+    expect(appendedLog).toContain("provider=openai-chat");
+    expect(appendedLog).toContain("model=gpt-5-nano");
   });
 
   it("never sends temperature for openai-responses", async () => {
