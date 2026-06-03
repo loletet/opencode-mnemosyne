@@ -464,6 +464,7 @@ export function parseEntries(text) {
     return entries;
 }
 function stripAnsi(text) {
+    return text;
     return text.replace(ANSI_RE, "");
 }
 function parseHeader(header) {
