@@ -1,8 +1,8 @@
 # OpenCode Memory
 
-[![npm version](https://img.shields.io/npm/v/opencode-mem.svg)](https://www.npmjs.com/package/opencode-mem)
-[![npm downloads](https://img.shields.io/npm/dm/opencode-mem.svg)](https://www.npmjs.com/package/opencode-mem)
-[![license](https://img.shields.io/npm/l/opencode-mem.svg)](https://www.npmjs.com/package/opencode-mem)
+[![npm version](https://img.shields.io/npm/v/opencode-mnemosyne.svg)](https://www.npmjs.com/package/opencode-mnemosyne)
+[![npm downloads](https://img.shields.io/npm/dm/opencode-mnemosyne.svg)](https://www.npmjs.com/package/opencode-mnemosyne)
+[![license](https://img.shields.io/npm/l/opencode-mnemosyne.svg)](https://www.npmjs.com/package/opencode-mnemosyne)
 
 ![OpenCode Memory Banner](.github/banner.png)
 
@@ -42,7 +42,7 @@ Add to your OpenCode configuration at `~/.config/opencode/opencode.json`:
 
 ```jsonc
 {
-  "plugin": ["opencode-mem"],
+  "plugin": ["opencode-mnemosyne"],
 }
 ```
 
@@ -62,11 +62,11 @@ Access the web interface at `http://127.0.0.1:4747` for visual memory browsing a
 
 ## Configuration Essentials
 
-Configure at `~/.config/opencode/opencode-mem.jsonc`:
+Configure at `~/.config/opencode/opencode-mnemosyne.jsonc`:
 
 ```jsonc
 {
-  "storagePath": "~/.opencode-mem/data",
+  "storagePath": "~/.opencode-mnemosyne/data",
   "userEmailOverride": "user@example.com",
   "userNameOverride": "John Doe",
   "embeddingModel": "Xenova/nomic-embed-text-v1",
@@ -158,8 +158,8 @@ This project is actively seeking contributions to become the definitive memory p
 
 MIT License - see LICENSE file
 
-- **Repository**: https://github.com/tickernelz/opencode-mem
-- **Issues**: https://github.com/tickernelz/opencode-mem/issues
+- **Repository**: https://github.com/codexy/opencode-mnemosyne
+- **Issues**: https://github.com/codexy/opencode-mnemosyne/issues
 - **OpenCode Platform**: https://opencode.ai
 
 Inspired by [opencode-supermemory](https://github.com/supermemoryai/opencode-supermemory)
