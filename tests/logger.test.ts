@@ -30,10 +30,10 @@ describe("logger v2", () => {
     logger.info("test.scope", "hello world", { foo: "bar", n: 42 });
     const text = readFileSync(logFile, "utf-8");
     expect(text).toMatch(
-      /\[20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z\] INFO \[test\.scope\] hello world/
+      /INFO\s+20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z \[test\.scope\] hello world/
     );
-    expect(text).toMatch(/  foo: bar/);
-    expect(text).toMatch(/  n: 42/);
+    expect(text).toMatch(/foo=bar/);
+    expect(text).toMatch(/n=42/);
   });
 
   it("serializes Error with full chain (name, message, stack, cause)", async () => {
@@ -44,14 +44,14 @@ describe("logger v2", () => {
     (wrapped as Error & { cause?: unknown }).cause = root;
     logger.error("test.scope", "wrapped failure", wrapped);
     const text = readFileSync(logFile, "utf-8");
-    expect(text).toMatch(/ERROR \[test\.scope\] wrapped failure/);
+    expect(text).toMatch(/ERROR\s+20\d\d-.* \[test\.scope\] wrapped failure/);
     expect(text).toMatch(/  error:/);
-    expect(text).toMatch(/    name: TypeError/);
-    expect(text).toMatch(/    message: outer failure/);
-    expect(text).toMatch(/    stack:/);
-    expect(text).toMatch(/    cause:/);
-    expect(text).toMatch(/      name: Error/);
-    expect(text).toMatch(/      message: upstream returned 500/);
+    expect(text).toMatch(/"name": "TypeError"/);
+    expect(text).toMatch(/"message": "outer failure"/);
+    expect(text).toMatch(/"stack":/);
+    expect(text).toMatch(/"cause":/);
+    expect(text).toMatch(/"name": "Error"/);
+    expect(text).toMatch(/"message": "upstream returned 500"/);
   });
 
   it("respects log level threshold (env var)", async () => {
@@ -79,8 +79,8 @@ describe("logger v2", () => {
       logger.info("test.scope", "still has session");
     });
     const text = readFileSync(logFile, "utf-8");
-    expect(text).toMatch(/sessionID: ses_abc/);
-    expect(text).toMatch(/agentID: choom/);
+    expect(text).toMatch(/sessionID=ses_abc/);
+    expect(text).toMatch(/agentID=choom/);
   });
 
   it("subscribers receive each entry in-process", async () => {
@@ -100,8 +100,8 @@ describe("logger v2", () => {
     _resetForTests();
     log("legacy message", { key: "value" });
     const text = readFileSync(logFile, "utf-8");
-    expect(text).toMatch(/INFO \[app\] legacy message/);
-    expect(text).toMatch(/  key: value/);
+    expect(text).toMatch(/INFO\s+20\d\d-.* \[app\] legacy message/);
+    expect(text).toMatch(/key=value/);
   });
 
   it("legacy log() detects an Error in the data object and serializes the chain", async () => {
@@ -111,9 +111,9 @@ describe("logger v2", () => {
     log("legacy error", { error: err, context: "extra" });
     const text = readFileSync(logFile, "utf-8");
     expect(text).toMatch(/  error:/);
-    expect(text).toMatch(/    name: Error/);
-    expect(text).toMatch(/    message: real error/);
-    expect(text).toMatch(/  context: extra/);
+    expect(text).toMatch(/"name": "Error"/);
+    expect(text).toMatch(/"message": "real error"/);
+    expect(text).toMatch(/context=extra/);
   });
 
   it("parseEntries round-trips the on-disk format", async () => {

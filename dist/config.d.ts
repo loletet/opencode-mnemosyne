@@ -1,0 +1,62 @@
+export declare let CONFIG: {
+    storagePath: string;
+    userEmailOverride: string | undefined;
+    userNameOverride: string | undefined;
+    embeddingModel: string;
+    embeddingDimensions: number;
+    embeddingApiUrl: string | undefined;
+    embeddingApiKey: string | undefined;
+    similarityThreshold: number;
+    maxMemories: number;
+    maxProfileItems: number;
+    injectProfile: boolean;
+    containerTagPrefix: string;
+    autoCaptureEnabled: boolean;
+    autoCaptureMaxIterations: number;
+    autoCaptureIterationTimeout: number;
+    autoCaptureLanguage: string | undefined;
+    memoryProvider: "openai-chat" | "openai-responses" | "anthropic";
+    memoryModel: string | undefined;
+    memoryApiUrl: string | undefined;
+    memoryApiKey: string | undefined;
+    memoryTemperature: number | false | undefined;
+    memoryExtraParams: Record<string, unknown> | undefined;
+    opencodeProvider: string | undefined;
+    opencodeModel: string | undefined;
+    vectorBackend: "usearch-first" | "usearch" | "exact-scan";
+    aiSessionRetentionDays: number;
+    webServerEnabled: boolean;
+    webServerPort: number;
+    webServerHost: string;
+    maxVectorsPerShard: number;
+    autoCleanupEnabled: boolean;
+    autoCleanupRetentionDays: number;
+    deduplicationEnabled: boolean;
+    deduplicationSimilarityThreshold: number;
+    userProfileAnalysisInterval: number;
+    userProfileMaxPreferences: number;
+    userProfileMaxPatterns: number;
+    userProfileMaxWorkflows: number;
+    userProfileConfidenceDecayDays: number;
+    userProfileChangelogRetentionCount: number;
+    showAutoCaptureToasts: boolean;
+    showUserProfileToasts: boolean;
+    showErrorToasts: boolean;
+    memory: {
+        defaultScope: "project" | "all-projects" | undefined;
+    };
+    compaction: {
+        enabled: boolean | undefined;
+        memoryLimit: number | undefined;
+    };
+    chatMessage: {
+        enabled: boolean | undefined;
+        maxMemories: number | undefined;
+        excludeCurrentSession: boolean | undefined;
+        maxAgeDays: number | undefined;
+        injectOn: "first" | "always";
+    };
+};
+export declare function initConfig(directory: string): void;
+export declare function isConfigured(): boolean;
+//# sourceMappingURL=config.d.ts.map
