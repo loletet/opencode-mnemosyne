@@ -12,7 +12,7 @@ import { userPromptManager } from "./services/user-prompt/user-prompt-manager.js
 import { startWebServer, WebServer } from "./services/web-server.js";
 
 import { isConfigured, CONFIG, initConfig } from "./config.js";
-import { log } from "./services/logger.js";
+import { log, logger } from "./services/logger.js";
 import type { MemoryType } from "./types/index.js";
 import { getLanguageName } from "./services/language-detector.js";
 import type { MemoryScope } from "./services/client.js";
@@ -45,10 +45,18 @@ export const MnemosynePlugin: Plugin = async (ctx: PluginInput) => {
 
   (async () => {
     try {
+      logger.info("plugin", "initializing opencode provider state", {
+        serverUrl: String(ctx.serverUrl),
+      });
       const { setConnectedProviders, setV2Client, createV2Client } =
         await import("./services/ai/opencode-provider.js");
       setV2Client(createV2Client(ctx.serverUrl));
       const providerResult = await ctx.client.provider.list();
+      logger.info("plugin", "opencode provider list returned", {
+        hasData: Boolean(providerResult.data),
+        connectedProviders: providerResult.data?.connected?.join(",") ?? "",
+        connectedProviderCount: providerResult.data?.connected?.length ?? 0,
+      });
       if (providerResult.data?.connected) {
         setConnectedProviders(providerResult.data.connected);
       }
@@ -62,6 +70,76 @@ export const MnemosynePlugin: Plugin = async (ctx: PluginInput) => {
       port: CONFIG.webServerPort,
       host: CONFIG.webServerHost,
       enabled: CONFIG.webServerEnabled,
+      triggerAutoCapture: async ({ sessionID }) => {
+        logger.info("auto-capture.manual", "manual capture API handler started", {
+          requestedSessionID: sessionID,
+          directory,
+        });
+
+        const prompt = sessionID
+          ? userPromptManager.getLastUncapturedPrompt(sessionID)
+          : userPromptManager.getLastUncapturedPromptAny();
+
+        if (!prompt) {
+          logger.info("auto-capture.manual", "manual capture stopped: no uncaptured prompt", {
+            requestedSessionID: sessionID,
+          });
+          return {
+            success: false,
+            error: sessionID
+              ? `No uncaptured prompt found for session ${sessionID}`
+              : "No uncaptured prompts found across any session",
+          };
+        }
+
+        logger.info("auto-capture.manual", "manual capture selected prompt", {
+          requestedSessionID: sessionID,
+          promptId: prompt.id,
+          promptSessionId: prompt.sessionId,
+          messageId: prompt.messageId,
+          projectPath: prompt.projectPath,
+          promptLength: prompt.content.length,
+          promptPreview: prompt.content.slice(0, 240),
+        });
+
+        try {
+          const result = await performAutoCapture(ctx, prompt.sessionId, directory, {
+            promptId: prompt.id,
+            trigger: "manual",
+          });
+
+          logger.info("auto-capture.manual", "manual capture API handler completed", {
+            requestedSessionID: sessionID,
+            promptId: prompt.id,
+            status: result.status,
+            success: result.success,
+            memoryId: result.memoryId,
+            summaryType: result.summaryType,
+          });
+
+          return {
+            success: result.success,
+            data: result,
+            error: result.success ? undefined : result.message,
+          };
+        } catch (error) {
+          logger.error("auto-capture.manual", "manual capture API handler failed", error, {
+            requestedSessionID: sessionID,
+            promptId: prompt.id,
+            promptSessionId: prompt.sessionId,
+          });
+          return {
+            success: false,
+            error: error instanceof Error ? error.message : String(error),
+            data: {
+              success: false,
+              status: "failed",
+              promptId: prompt.id,
+              message: error instanceof Error ? error.message : String(error),
+            },
+          };
+        }
+      },
     })
       .then((server) => {
         webServer = server;

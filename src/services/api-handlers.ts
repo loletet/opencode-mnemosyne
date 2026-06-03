@@ -1253,15 +1253,17 @@ export function handleGetLogsStream(params: { minLevel?: string; scope?: string 
  * Otherwise the most recent uncaptured prompt across all sessions
  * is targeted.
  *
- * This is a "kick the daemon" button — it does not run the capture
- * synchronously (the auto-capture path needs the plugin's full ctx,
- * which isn't exposed to the web server). It marks the prompt as
- * eligible and returns immediately. Watch the logs to see the result.
+ * Fallback only. The owning WebServer should inject a runtime handler
+ * with plugin ctx so the button can run capture synchronously.
  */
 export function handleTriggerAutoCapture(params: {
   sessionID?: string;
 }): ApiResponse<{ promptId?: string; message: string }> {
   try {
+    logger.info("auto-capture.manual", "fallback trigger endpoint called without runtime handler", {
+      requestedSessionID: params.sessionID,
+    });
+
     let prompt;
     if (params.sessionID) {
       prompt = userPromptManager.getLastUncapturedPrompt(params.sessionID);
@@ -1277,21 +1279,20 @@ export function handleTriggerAutoCapture(params: {
       };
     }
 
-    const claimed = userPromptManager.claimPrompt(prompt.id);
-    if (!claimed) {
-      return { success: false, error: "Prompt was already claimed by another capture" };
-    }
-
-    logger.info("auto-capture", "manual trigger armed", {
+    logger.info("auto-capture.manual", "fallback trigger found prompt but cannot run inference", {
       promptId: prompt.id,
       sessionId: prompt.sessionId,
+      messageId: prompt.messageId,
     });
+
     return {
-      success: true,
+      success: false,
+      error:
+        "Manual capture runtime handler is not installed. Restart OpenCode so the local Mnemosyne plugin can pass ctx to the web server.",
       data: {
         promptId: prompt.id,
         message:
-          "Trigger armed. The next session.idle event (or 10s, whichever comes first) will run auto-capture against this prompt. Watch the logs.",
+          "Found an uncaptured prompt, but this web server instance cannot run inference because it has no plugin runtime handler.",
       },
     };
   } catch (error) {

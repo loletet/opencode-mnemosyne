@@ -1,7 +1,7 @@
 import { BaseAIProvider, type ToolCallResult } from "./base-provider.js";
 import { AISessionManager } from "../session/ai-session-manager.js";
 import { ToolSchemaConverter, type ChatCompletionTool } from "../tools/tool-schema.js";
-import { log } from "../../logger.js";
+import { log, logger } from "../../logger.js";
 import { UserProfileValidator } from "../validators/user-profile-validator.js";
 
 interface AnthropicMessage {
@@ -52,11 +52,25 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
   ): Promise<ToolCallResult> {
     let session = this.aiSessionManager.getSession(sessionId, "anthropic");
 
+    logger.info("auto-capture.inference.http", "anthropic executeToolCall started", {
+      sessionId,
+      provider: this.getProviderName(),
+      model: this.config.model,
+      apiUrl: this.config.apiUrl,
+      hasApiKey: Boolean(this.config.apiKey),
+      systemPromptLength: systemPrompt.length,
+      userPromptLength: userPrompt.length,
+    });
+
     if (!session) {
       session = this.aiSessionManager.createSession({
         provider: "anthropic",
         sessionId,
         metadata: { systemPrompt },
+      });
+      logger.info("auto-capture.inference.http", "anthropic AI session created", {
+        sessionId,
+        aiSessionId: session.id,
       });
     }
 
@@ -114,6 +128,18 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
           headers["x-api-key"] = this.config.apiKey;
         }
 
+        logger.info("auto-capture.inference.http", "anthropic HTTP request starting", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          maxIterations,
+          iterationTimeout,
+          url: `${this.config.apiUrl}/messages`,
+          model: this.config.model,
+          messageCount: messages.length,
+          toolName: toolSchema.function.name,
+        });
+
         const response = await fetch(`${this.config.apiUrl}/messages`, {
           method: "POST",
           headers,
@@ -122,6 +148,15 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
         });
 
         clearTimeout(timeout);
+
+        logger.info("auto-capture.inference.http", "anthropic HTTP response received", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          status: response.status,
+          ok: response.ok,
+          statusText: response.statusText,
+        });
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => response.statusText);
@@ -141,6 +176,16 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
 
         const data = (await response.json()) as AnthropicResponse;
 
+        logger.info("auto-capture.inference.http", "anthropic response JSON parsed", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          stopReason: data.stop_reason,
+          contentBlockCount: Array.isArray(data.content) ? data.content.length : undefined,
+          inputTokens: data.usage?.input_tokens,
+          outputTokens: data.usage?.output_tokens,
+        });
+
         const assistantSequence = this.aiSessionManager.getLastSequence(session.id) + 1;
         this.aiSessionManager.addMessage({
           aiSessionId: session.id,
@@ -158,6 +203,12 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
         const toolUse = this.extractToolUse(data, toolSchema.function.name);
 
         if (toolUse) {
+          logger.info("auto-capture.inference.http", "anthropic tool use extracted", {
+            sessionId,
+            aiSessionId: session.id,
+            iteration: iterations,
+            toolName: toolSchema.function.name,
+          });
           try {
             const result = UserProfileValidator.validate(toolUse);
             if (!result.valid) {
@@ -190,6 +241,15 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
         }
 
         if (data.stop_reason === "end_turn") {
+          logger.info(
+            "auto-capture.inference.http",
+            "anthropic response ended without tool use; retrying",
+            {
+              sessionId,
+              aiSessionId: session.id,
+              iteration: iterations,
+            }
+          );
           const retrySequence = this.aiSessionManager.getLastSequence(session.id) + 1;
           const retryPrompt =
             "Please use the save_memories tool to extract and save the memories from the conversation as instructed.";
@@ -207,6 +267,17 @@ export class AnthropicMessagesProvider extends BaseAIProvider {
         }
       } catch (error) {
         clearTimeout(timeout);
+        logger.error(
+          "auto-capture.inference.http",
+          "anthropic executeToolCall iteration failed",
+          error,
+          {
+            sessionId,
+            iteration: iterations,
+            model: this.config.model,
+            apiUrl: this.config.apiUrl,
+          }
+        );
         if (error instanceof Error && error.name === "AbortError") {
           return {
             success: false,
