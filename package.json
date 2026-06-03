@@ -22,7 +22,7 @@
     "format": "prettier --write \"src/**/*.{ts,js,css,html}\"",
     "format:check": "prettier --check \"src/**/*.{ts,js,css,html}\"",
     "prepare": "husky",
-    "test": "bun run build && bun test"
+    "test": "bun run build && bun test tests"
   },
   "keywords": [
     "opencode",
