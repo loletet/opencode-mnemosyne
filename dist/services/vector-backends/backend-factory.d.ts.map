@@ -1,0 +1,1 @@
+{"version":3,"file":"backend-factory.d.ts","sourceRoot":"","sources":["../../../src/services/vector-backends/backend-factory.ts"],"names":[],"mappings":"AAGA,OAAO,KAAK,EAAE,aAAa,EAAE,2BAA2B,EAAE,MAAM,YAAY,CAAC;AA4E7E,wBAAsB,mBAAmB,CACvC,OAAO,EAAE,2BAA2B,GACnC,OAAO,CAAC,aAAa,CAAC,CAsCxB"}
