@@ -7,7 +7,9 @@
 
 import { describe, expect, it } from "bun:test";
 import { ensureDistBuild } from "./helpers/ensure-dist";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { readFileSync } from "node:fs";
+import { ensureDistPluginBuilt } from "./dist-build-helper.js";
 
 function readPackageJson(): Record<string, unknown> {
   const raw = readFileSync(new URL("../package.json", import.meta.url), "utf-8");
@@ -22,6 +24,9 @@ async function loadDistPlugin(): Promise<unknown> {
 ensureDistBuild();
 
 describe("OpenCode 1.3.x plugin-loader contract", () => {
+  beforeAll(() => {
+    ensureDistPluginBuilt();
+  });
   it("dist/plugin.js imports package.json with a JSON import attribute", () => {
     const source = readFileSync(new URL("../dist/plugin.js", import.meta.url), "utf-8");
 
