@@ -1,7 +1,7 @@
 import { BaseAIProvider, type ToolCallResult, applySafeExtraParams } from "./base-provider.js";
 import { AISessionManager } from "../session/ai-session-manager.js";
 import { ToolSchemaConverter, type ChatCompletionTool } from "../tools/tool-schema.js";
-import { log } from "../../logger.js";
+import { log, logger } from "../../logger.js";
 
 interface ResponsesAPIOutput {
   id: string;
@@ -46,10 +46,24 @@ export class OpenAIResponsesProvider extends BaseAIProvider {
   ): Promise<ToolCallResult> {
     let session = this.aiSessionManager.getSession(sessionId, "openai-responses");
 
+    logger.info("auto-capture.inference.http", "openai-responses executeToolCall started", {
+      sessionId,
+      provider: this.getProviderName(),
+      model: this.config.model,
+      apiUrl: this.config.apiUrl,
+      hasApiKey: Boolean(this.config.apiKey),
+      systemPromptLength: systemPrompt.length,
+      userPromptLength: userPrompt.length,
+    });
+
     if (!session) {
       session = this.aiSessionManager.createSession({
         provider: "openai-responses",
         sessionId,
+      });
+      logger.info("auto-capture.inference.http", "openai-responses AI session created", {
+        sessionId,
+        aiSessionId: session.id,
       });
     }
 
@@ -84,6 +98,21 @@ export class OpenAIResponsesProvider extends BaseAIProvider {
           applySafeExtraParams(requestBody, this.config.extraParams);
         }
 
+        logger.info("auto-capture.inference.http", "openai-responses HTTP request starting", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          maxIterations,
+          iterationTimeout,
+          url: `${this.config.apiUrl}/responses`,
+          model: this.config.model,
+          hasConversationId: Boolean(conversationId),
+          toolName: toolSchema.function.name,
+          extraParamKeys: this.config.extraParams
+            ? Object.keys(this.config.extraParams).join(",")
+            : "",
+        });
+
         const response = await fetch(`${this.config.apiUrl}/responses`, {
           method: "POST",
           headers: {
@@ -95,6 +124,15 @@ export class OpenAIResponsesProvider extends BaseAIProvider {
         });
 
         clearTimeout(timeout);
+
+        logger.info("auto-capture.inference.http", "openai-responses HTTP response received", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          status: response.status,
+          ok: response.ok,
+          statusText: response.statusText,
+        });
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => response.statusText);
@@ -114,6 +152,16 @@ export class OpenAIResponsesProvider extends BaseAIProvider {
 
         const data = (await response.json()) as ResponsesAPIOutput;
 
+        logger.info("auto-capture.inference.http", "openai-responses response JSON parsed", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          outputCount: Array.isArray(data.output) ? data.output.length : undefined,
+          conversationId: data.conversation,
+          usageInputTokens: data.usage?.input_tokens,
+          usageOutputTokens: data.usage?.output_tokens,
+        });
+
         conversationId = data.conversation || conversationId;
 
         if (iterations === 1) {
@@ -129,6 +177,12 @@ export class OpenAIResponsesProvider extends BaseAIProvider {
         const toolCall = this.extractToolCall(data, toolSchema.function.name);
 
         if (toolCall) {
+          logger.info("auto-capture.inference.http", "openai-responses tool call extracted", {
+            sessionId,
+            aiSessionId: session.id,
+            iteration: iterations,
+            toolName: toolSchema.function.name,
+          });
           this.aiSessionManager.updateSession(sessionId, "openai-responses", {
             conversationId,
           });
@@ -141,8 +195,25 @@ export class OpenAIResponsesProvider extends BaseAIProvider {
         }
 
         currentPrompt = this.buildRetryPrompt(data);
+        logger.info("auto-capture.inference.http", "openai-responses retry prompt built", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          retryPromptLength: currentPrompt.length,
+        });
       } catch (error) {
         clearTimeout(timeout);
+        logger.error(
+          "auto-capture.inference.http",
+          "openai-responses executeToolCall iteration failed",
+          error,
+          {
+            sessionId,
+            iteration: iterations,
+            model: this.config.model,
+            apiUrl: this.config.apiUrl,
+          }
+        );
         if (error instanceof Error && error.name === "AbortError") {
           return {
             success: false,

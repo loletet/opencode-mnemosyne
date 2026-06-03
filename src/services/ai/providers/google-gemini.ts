@@ -1,7 +1,7 @@
 import { BaseAIProvider, type ToolCallResult } from "./base-provider.js";
 import { AISessionManager } from "../session/ai-session-manager.js";
 import type { ChatCompletionTool } from "../tools/tool-schema.js";
-import { log } from "../../logger.js";
+import { log, logger } from "../../logger.js";
 import { UserProfileValidator } from "../validators/user-profile-validator.js";
 
 /**
@@ -60,10 +60,24 @@ export class GoogleGeminiProvider extends BaseAIProvider {
   ): Promise<ToolCallResult> {
     let session = this.aiSessionManager.getSession(sessionId, "google-gemini");
 
+    logger.info("auto-capture.inference.http", "gemini executeToolCall started", {
+      sessionId,
+      provider: this.getProviderName(),
+      model: this.config.model,
+      apiUrl: this.config.apiUrl,
+      hasApiKey: Boolean(this.config.apiKey),
+      systemPromptLength: systemPrompt.length,
+      userPromptLength: userPrompt.length,
+    });
+
     if (!session) {
       session = this.aiSessionManager.createSession({
         provider: "google-gemini",
         sessionId,
+      });
+      logger.info("auto-capture.inference.http", "gemini AI session created", {
+        sessionId,
+        aiSessionId: session.id,
       });
     }
 
@@ -168,6 +182,18 @@ export class GoogleGeminiProvider extends BaseAIProvider {
           },
         };
 
+        logger.info("auto-capture.inference.http", "gemini HTTP request starting", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          maxIterations,
+          iterationTimeout,
+          url: `${baseUrl}/models/${this.config.model}:generateContent`,
+          model: this.config.model,
+          contentCount: contents.length,
+          toolName: toolSchema.function.name,
+        });
+
         const response = await fetch(url, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -176,6 +202,15 @@ export class GoogleGeminiProvider extends BaseAIProvider {
         });
 
         clearTimeout(timeout);
+
+        logger.info("auto-capture.inference.http", "gemini HTTP response received", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          status: response.status,
+          ok: response.ok,
+          statusText: response.statusText,
+        });
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => response.statusText);
@@ -194,6 +229,12 @@ export class GoogleGeminiProvider extends BaseAIProvider {
         }
 
         const data = (await response.json()) as any;
+        logger.info("auto-capture.inference.http", "gemini response JSON parsed", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          candidateCount: Array.isArray(data.candidates) ? data.candidates.length : undefined,
+        });
         const candidate = data.candidates?.[0];
 
         if (!candidate || !candidate.content) {
@@ -230,6 +271,13 @@ export class GoogleGeminiProvider extends BaseAIProvider {
         contents.push(modelMsg);
 
         if (assistantMsg.toolCalls.length > 0) {
+          logger.info("auto-capture.inference.http", "gemini tool calls returned", {
+            sessionId,
+            aiSessionId: session.id,
+            iteration: iterations,
+            toolCallCount: assistantMsg.toolCalls.length,
+            toolNames: assistantMsg.toolCalls.map((tc: any) => tc.function.name).join(","),
+          });
           for (const toolCall of assistantMsg.toolCalls) {
             if (toolCall.function.name === toolSchema.function.name) {
               try {
@@ -260,6 +308,11 @@ export class GoogleGeminiProvider extends BaseAIProvider {
 
         // Retry if no tool call was made
         const retryPrompt = "Please use the save_memories tool as instructed.";
+        logger.info("auto-capture.inference.http", "gemini response had no tool call; retrying", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+        });
         const retrySequence = this.aiSessionManager.getLastSequence(session.id) + 1;
         this.aiSessionManager.addMessage({
           aiSessionId: session.id,
@@ -270,6 +323,17 @@ export class GoogleGeminiProvider extends BaseAIProvider {
         contents.push({ role: "user", parts: [{ text: retryPrompt }] });
       } catch (error) {
         clearTimeout(timeout);
+        logger.error(
+          "auto-capture.inference.http",
+          "gemini executeToolCall iteration failed",
+          error,
+          {
+            sessionId,
+            iteration: iterations,
+            model: this.config.model,
+            apiUrl: this.config.apiUrl,
+          }
+        );
         return { success: false, error: String(error), iterations };
       }
     }

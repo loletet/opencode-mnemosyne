@@ -102,6 +102,17 @@ export class UserPromptManager {
     return this.rowToPrompt(row);
   }
 
+  getUncapturedPromptById(promptId: string): UserPrompt | null {
+    const stmt = this.db.prepare(`
+      SELECT * FROM user_prompts
+      WHERE id = ? AND captured = 0
+      LIMIT 1
+    `);
+    const row = stmt.get(promptId) as any;
+    if (!row) return null;
+    return this.rowToPrompt(row);
+  }
+
   deletePrompt(promptId: string): void {
     const stmt = this.db.prepare(`DELETE FROM user_prompts WHERE id = ?`);
     stmt.run(promptId);
@@ -115,6 +126,14 @@ export class UserPromptManager {
   claimPrompt(promptId: string): boolean {
     const stmt = this.db.prepare(
       `UPDATE user_prompts SET captured = 2 WHERE id = ? AND captured = 0`
+    );
+    const result = stmt.run(promptId);
+    return result.changes > 0;
+  }
+
+  releasePromptClaim(promptId: string): boolean {
+    const stmt = this.db.prepare(
+      `UPDATE user_prompts SET captured = 0 WHERE id = ? AND captured = 2`
     );
     const result = stmt.run(promptId);
     return result.changes > 0;

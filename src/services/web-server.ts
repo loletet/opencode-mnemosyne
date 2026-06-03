@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { log } from "./logger.js";
+import { log, logger } from "./logger.js";
 import {
   handleListTags,
   handleListMemories,
@@ -38,6 +38,7 @@ interface WebServerConfig {
   port: number;
   host: string;
   enabled: boolean;
+  triggerAutoCapture?: (params: { sessionID?: string }) => Promise<any>;
 }
 
 export class WebServer {
@@ -409,12 +410,30 @@ export class WebServer {
 
       if (path === "/api/auto-capture/trigger" && method === "POST") {
         const body = (await req.json().catch(() => ({}))) as { sessionID?: string };
-        const result = handleTriggerAutoCapture({ sessionID: body.sessionID });
+        logger.info("web.api", "auto-capture trigger request received", {
+          sessionID: body.sessionID,
+          hasRuntimeHandler: Boolean(this.config.triggerAutoCapture),
+          isOwner: this.isOwner,
+        });
+        const result = this.config.triggerAutoCapture
+          ? await this.config.triggerAutoCapture({ sessionID: body.sessionID })
+          : handleTriggerAutoCapture({ sessionID: body.sessionID });
+        logger.info("web.api", "auto-capture trigger request completed", {
+          sessionID: body.sessionID,
+          success: result.success,
+          error: result.error,
+          promptId: result.data?.promptId,
+          memoryId: result.data?.memoryId,
+        });
         return this.jsonResponse(result);
       }
 
       return new Response("Not Found", { status: 404 });
     } catch (error) {
+      logger.error("web.api", "request failed", error, {
+        path,
+        method,
+      });
       return this.jsonResponse(
         {
           success: false,

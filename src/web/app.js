@@ -1303,19 +1303,35 @@ async function triggerAutoCapture() {
   if (btn) btn.disabled = true;
   setLogsStatus("triggering auto-capture…");
   try {
+    console.info("[mnemosyne] manual auto-capture trigger clicked");
     const result = await fetchAPI("/api/auto-capture/trigger", {
       method: "POST",
       body: JSON.stringify({}),
     });
+    console.info("[mnemosyne] manual auto-capture trigger response", result);
     if (result.success) {
-      showToast(result.data.message, "success");
-      setLogsStatus(`trigger armed: ${result.data.promptId ?? "?"}`);
+      const status = result.data?.status ?? "unknown";
+      const promptId = result.data?.promptId ?? "?";
+      const memoryId = result.data?.memoryId;
+      showToast(result.data?.message ?? "capture completed", "success");
+      setLogsStatus(
+        memoryId
+          ? `capture ${status}: prompt ${promptId} -> memory ${memoryId}`
+          : `capture ${status}: prompt ${promptId}`
+      );
     } else {
       showToast(result.error || "trigger failed", "error");
-      setLogsStatus(`trigger failed: ${result.error ?? "unknown"}`, "error");
+      const status = result.data?.status;
+      const promptId = result.data?.promptId;
+      setLogsStatus(
+        `trigger failed${status ? ` (${status})` : ""}${promptId ? ` prompt ${promptId}` : ""}: ${result.error ?? "unknown"}`,
+        "error"
+      );
     }
   } catch (err) {
+    console.error("[mnemosyne] manual auto-capture trigger threw", err);
     showToast(String(err), "error");
+    setLogsStatus(`trigger threw: ${String(err)}`, "error");
   } finally {
     if (btn) btn.disabled = false;
   }

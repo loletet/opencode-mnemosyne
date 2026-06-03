@@ -7,7 +7,7 @@ import {
 import type { AISessionManager } from "../session/ai-session-manager.js";
 import type { AIMessage } from "../session/session-types.js";
 import type { ChatCompletionTool } from "../tools/tool-schema.js";
-import { log } from "../../logger.js";
+import { log, logger } from "../../logger.js";
 import { UserProfileValidator } from "../validators/user-profile-validator.js";
 
 interface ToolCallResponse {
@@ -155,10 +155,24 @@ export class OpenAIChatCompletionProvider extends BaseAIProvider {
   ): Promise<ToolCallResult> {
     let session = this.aiSessionManager.getSession(sessionId, "openai-chat");
 
+    logger.info("auto-capture.inference.http", "openai-chat executeToolCall started", {
+      sessionId,
+      provider: this.getProviderName(),
+      model: this.config.model,
+      apiUrl: this.config.apiUrl,
+      hasApiKey: Boolean(this.config.apiKey),
+      systemPromptLength: systemPrompt.length,
+      userPromptLength: userPrompt.length,
+    });
+
     if (!session) {
       session = this.aiSessionManager.createSession({
         provider: "openai-chat",
         sessionId,
+      });
+      logger.info("auto-capture.inference.http", "openai-chat AI session created", {
+        sessionId,
+        aiSessionId: session.id,
       });
     }
 
@@ -240,6 +254,22 @@ export class OpenAIChatCompletionProvider extends BaseAIProvider {
           headers.Authorization = `Bearer ${this.config.apiKey}`;
         }
 
+        logger.info("auto-capture.inference.http", "openai-chat HTTP request starting", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          maxIterations,
+          iterationTimeout,
+          url: `${this.config.apiUrl}/chat/completions`,
+          model: this.config.model,
+          messageCount: messages.length,
+          toolName: toolSchema.function.name,
+          hasTemperature: requestBody.temperature !== undefined,
+          extraParamKeys: this.config.extraParams
+            ? Object.keys(this.config.extraParams).join(",")
+            : "",
+        });
+
         const response = await fetch(`${this.config.apiUrl}/chat/completions`, {
           method: "POST",
           headers,
@@ -248,6 +278,15 @@ export class OpenAIChatCompletionProvider extends BaseAIProvider {
         });
 
         clearTimeout(timeout);
+
+        logger.info("auto-capture.inference.http", "openai-chat HTTP response received", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          status: response.status,
+          ok: response.ok,
+          statusText: response.statusText,
+        });
 
         if (!response.ok) {
           const errorText = await response.text().catch(() => response.statusText);
@@ -278,6 +317,16 @@ export class OpenAIChatCompletionProvider extends BaseAIProvider {
         }
 
         const data: unknown = await response.json();
+
+        logger.info("auto-capture.inference.http", "openai-chat response JSON parsed", {
+          sessionId,
+          aiSessionId: session.id,
+          iteration: iterations,
+          hasChoices: Array.isArray((data as { choices?: unknown }).choices),
+          choicesLength: Array.isArray((data as { choices?: unknown }).choices)
+            ? ((data as { choices?: unknown[] }).choices?.length ?? 0)
+            : undefined,
+        });
 
         if (isErrorResponseBody(data)) {
           log("API returned error in response body", {
@@ -342,6 +391,13 @@ export class OpenAIChatCompletionProvider extends BaseAIProvider {
         });
 
         if (choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+          logger.info("auto-capture.inference.http", "openai-chat tool calls returned", {
+            sessionId,
+            aiSessionId: session.id,
+            iteration: iterations,
+            toolCallCount: choice.message.tool_calls.length,
+            toolNames: choice.message.tool_calls.map((tc) => tc.function.name).join(","),
+          });
           for (const toolCall of choice.message.tool_calls) {
             const toolCallId = toolCall.id;
 
@@ -406,6 +462,14 @@ export class OpenAIChatCompletionProvider extends BaseAIProvider {
 
             break;
           }
+        } else {
+          logger.info("auto-capture.inference.http", "openai-chat response had no tool call", {
+            sessionId,
+            aiSessionId: session.id,
+            iteration: iterations,
+            finishReason: choice.finish_reason,
+            contentLength: choice.message.content?.length ?? 0,
+          });
         }
 
         const retrySequence = this.aiSessionManager.getLastSequence(session.id) + 1;
@@ -422,6 +486,17 @@ export class OpenAIChatCompletionProvider extends BaseAIProvider {
         messages.push({ role: "user", content: retryPrompt });
       } catch (error) {
         clearTimeout(timeout);
+        logger.error(
+          "auto-capture.inference.http",
+          "openai-chat executeToolCall iteration failed",
+          error,
+          {
+            sessionId,
+            iteration: iterations,
+            model: this.config.model,
+            apiUrl: this.config.apiUrl,
+          }
+        );
         if (error instanceof Error && error.name === "AbortError") {
           return {
             success: false,
