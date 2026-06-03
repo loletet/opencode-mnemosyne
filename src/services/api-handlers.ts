@@ -2,7 +2,16 @@ import { embeddingService } from "./embedding.js";
 import { shardManager } from "./sqlite/shard-manager.js";
 import { vectorSearch } from "./sqlite/vector-search.js";
 import { connectionManager } from "./sqlite/connection-manager.js";
-import { log, readLastEntries, parseEntries, getLogPath, subscribe, logger, type LogEntry, type LogLevel } from "./logger.js";
+import {
+  log,
+  readLastEntries,
+  parseEntries,
+  getLogPath,
+  subscribe,
+  logger,
+  type LogEntry,
+  type LogLevel,
+} from "./logger.js";
 import { CONFIG } from "../config.js";
 import type { MemoryType } from "../types/index.js";
 import { userPromptManager } from "./user-prompt/user-prompt-manager.js";
@@ -1097,7 +1106,11 @@ export async function handleRunTagMigrationBatch(
 
 const LEVEL_RANK: Record<LogLevel, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
-function entryMatchesFilters(entry: LogEntry, minLevel: LogLevel, scopeFilter: string | null): boolean {
+function entryMatchesFilters(
+  entry: LogEntry,
+  minLevel: LogLevel,
+  scopeFilter: string | null
+): boolean {
   if (LEVEL_RANK[entry.level] < LEVEL_RANK[minLevel]) return false;
   if (scopeFilter && !entry.scope.startsWith(scopeFilter)) return false;
   return true;
@@ -1135,7 +1148,7 @@ export function handleGetLogs(params: {
     const filtered = raw.filter(
       (e) =>
         entryMatchesFilters(e, minLevel, scopeFilter) &&
-        (since === null || new Date(e.timestamp).getTime() >= since),
+        (since === null || new Date(e.timestamp).getTime() >= since)
     );
     const entries = filtered.slice(-tail);
 
@@ -1158,10 +1171,10 @@ export function handleGetLogs(params: {
  * Returns the Response directly (not wrapped in ApiResponse) because
  * SSE needs a streaming Response with specific headers.
  */
-export function handleGetLogsStream(params: {
-  minLevel?: string;
-  scope?: string;
-}): { response: Response; close: () => void } {
+export function handleGetLogsStream(params: { minLevel?: string; scope?: string }): {
+  response: Response;
+  close: () => void;
+} {
   const minLevel = (params.minLevel ?? "info") as LogLevel;
   const scopeFilter = params.scope?.trim() || null;
 
