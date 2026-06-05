@@ -1,6 +1,6 @@
 import type { PluginInput } from "@opencode-ai/plugin";
 import { getTags } from "./tags.js";
-import { log } from "./logger.js";
+import { log, logger } from "./logger.js";
 import { CONFIG } from "../config.js";
 import { userPromptManager } from "./user-prompt/user-prompt-manager.js";
 import type { UserPrompt } from "./user-prompt/user-prompt-manager.js";
@@ -216,12 +216,32 @@ Use the update_user_profile tool to save the ${existingProfile ? "updated" : "ne
   }
 
   if (!CONFIG.memoryModel || !CONFIG.memoryApiUrl) {
-    log("User Profile Config Check Failed:", {
-      memoryModel: CONFIG.memoryModel,
-      memoryApiUrl: CONFIG.memoryApiUrl,
-      memoryApiKey: CONFIG.memoryApiKey,
-    });
-    throw new Error("External API not configured for user memory learning");
+    const missing: string[] = [];
+    if (!CONFIG.memoryModel) missing.push("memoryModel");
+    if (!CONFIG.memoryApiUrl) missing.push("memoryApiUrl");
+    const detail =
+      `External API not configured for user memory learning. ` +
+      `Missing: ${missing.join(", ")}. ` +
+      `memoryProvider=${CONFIG.memoryProvider}, ` +
+      `memoryModel=${CONFIG.memoryModel}, ` +
+      `memoryApiUrl=${CONFIG.memoryApiUrl}, ` +
+      `hasMemoryApiKey=${Boolean(CONFIG.memoryApiKey)}, ` +
+      `opencodeProvider=${CONFIG.opencodeProvider}, ` +
+      `opencodeModel=${CONFIG.opencodeModel}.`;
+    logger.error(
+      "user-memory-learning",
+      "memory fallback path: external API configuration missing",
+      {
+        missingFields: missing.join(","),
+        memoryProvider: CONFIG.memoryProvider,
+        memoryModel: CONFIG.memoryModel,
+        memoryApiUrl: CONFIG.memoryApiUrl,
+        hasMemoryApiKey: Boolean(CONFIG.memoryApiKey),
+        opencodeProvider: CONFIG.opencodeProvider,
+        opencodeModel: CONFIG.opencodeModel,
+      }
+    );
+    throw new Error(detail);
   }
 
   const { AIProviderFactory } = await import("./ai/ai-provider-factory.js");
