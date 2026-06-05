@@ -157,7 +157,10 @@ describe("AI provider config", () => {
       } as Response;
     }) as unknown as typeof fetch;
 
-    const beforeLog = existsSync(logFile) ? readFileSync(logFile, "utf-8") : "";
+    const { _internal } = await import("../src/services/logger.js");
+    const beforeLog = existsSync(logFile)
+      ? _internal.stripAnsi(readFileSync(logFile, "utf-8"))
+      : "";
 
     const provider = new OpenAIChatCompletionProvider(
       {
@@ -171,7 +174,7 @@ describe("AI provider config", () => {
 
     await provider.executeToolCall("system", "user", toolSchema, "session-id");
 
-    const afterLog = readFileSync(logFile, "utf-8");
+    const afterLog = _internal.stripAnsi(readFileSync(logFile, "utf-8"));
     const appendedLog = afterLog.slice(beforeLog.length);
 
     expect(appendedLog).toContain("provider=openai-chat");
@@ -186,7 +189,10 @@ describe("AI provider config", () => {
       } as Response;
     }) as unknown as typeof fetch;
 
-    const beforeLog = existsSync(logFile) ? readFileSync(logFile, "utf-8") : "";
+    const { _internal } = await import("../src/services/logger.js");
+    const beforeLog = existsSync(logFile)
+      ? _internal.stripAnsi(readFileSync(logFile, "utf-8"))
+      : "";
 
     const provider = new OpenAIChatCompletionProvider(
       {
@@ -200,7 +206,7 @@ describe("AI provider config", () => {
 
     await provider.executeToolCall("system", "user", toolSchema, "session-id");
 
-    const afterLog = readFileSync(logFile, "utf-8");
+    const afterLog = _internal.stripAnsi(readFileSync(logFile, "utf-8"));
     const appendedLog = afterLog.slice(beforeLog.length);
 
     expect(appendedLog).toContain("provider=openai-chat");

@@ -256,7 +256,13 @@ function formatValue(v: unknown, indent: string): string {
 }
 
 function formatEntry(entry: LogEntry): string {
-  const colors = Boolean(process.stdout?.isTTY && !process.env.NO_COLOR);
+  // The log file is viewed separately from the process that writes it (e.g.
+  // `tail -f` in a terminal), so the TTY status of process.stdout is
+  // irrelevant. Honor NO_COLOR / FORCE_COLOR, otherwise default to on so
+  // `tail -f ~/.opencode-mnemosyne/opencode-mnemosyne.log` renders colors.
+  const noColor = "NO_COLOR" in process.env && process.env.NO_COLOR !== "";
+  const forceColor = "FORCE_COLOR" in process.env && process.env.FORCE_COLOR !== "0";
+  const colors = forceColor || !noColor;
   const levelText = paint(LEVEL_LABEL[entry.level].padEnd(5), LEVEL_COLOR[entry.level], colors);
   const timeText = paint(entry.timestamp, ANSI.white, colors);
   const scopeText = paint(entry.scope, ANSI.cyan, colors);
@@ -588,6 +594,8 @@ export function parseEntries(text: string): LogEntry[] {
 function stripAnsi(text: string): string {
   return text.replace(ANSI_RE, "");
 }
+
+export const _internal = { stripAnsi };
 
 function parseHeader(header: string): {
   timestamp: string;

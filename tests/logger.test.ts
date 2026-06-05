@@ -25,10 +25,10 @@ describe("logger v2", () => {
   });
 
   it("writes a header line plus indented context fields", async () => {
-    const { logger, _resetForTests } = await import("../src/services/logger.js");
+    const { logger, _resetForTests, _internal } = await import("../src/services/logger.js");
     _resetForTests();
     logger.info("test.scope", "hello world", { foo: "bar", n: 42 });
-    const text = readFileSync(logFile, "utf-8");
+    const text = _internal.stripAnsi(readFileSync(logFile, "utf-8"));
     expect(text).toMatch(
       /INFO\s+20\d\d-\d\d-\d\dT\d\d:\d\d:\d\d\.\d+Z \[test\.scope\] hello world/
     );
@@ -37,13 +37,13 @@ describe("logger v2", () => {
   });
 
   it("serializes Error with full chain (name, message, stack, cause)", async () => {
-    const { logger, _resetForTests } = await import("../src/services/logger.js");
+    const { logger, _resetForTests, _internal } = await import("../src/services/logger.js");
     _resetForTests();
     const root = new Error("upstream returned 500");
     const wrapped = new TypeError("outer failure");
     (wrapped as Error & { cause?: unknown }).cause = root;
     logger.error("test.scope", "wrapped failure", wrapped);
-    const text = readFileSync(logFile, "utf-8");
+    const text = _internal.stripAnsi(readFileSync(logFile, "utf-8"));
     expect(text).toMatch(/ERROR\s+20\d\d-.* \[test\.scope\] wrapped failure/);
     expect(text).toMatch(/  error:/);
     expect(text).toMatch(/"name": "TypeError"/);
@@ -56,12 +56,12 @@ describe("logger v2", () => {
 
   it("respects log level threshold (env var)", async () => {
     process.env.OPENCODE_MNEMOSYNE_LOG_LEVEL = "warn";
-    const { logger, _resetForTests } = await import("../src/services/logger.js");
+    const { logger, _resetForTests, _internal } = await import("../src/services/logger.js");
     _resetForTests();
     logger.debug("test.scope", "should not appear");
     logger.info("test.scope", "should not appear either");
     logger.warn("test.scope", "should appear");
-    const text = readFileSync(logFile, "utf-8");
+    const text = _internal.stripAnsi(readFileSync(logFile, "utf-8"));
     expect(text).not.toContain("should not appear");
     expect(text).toContain("WARN");
     expect(text).toContain("should appear");
@@ -69,7 +69,8 @@ describe("logger v2", () => {
   });
 
   it("propagates context through runWithContext", async () => {
-    const { logger, runWithContext, _resetForTests } = await import("../src/services/logger.js");
+    const { logger, runWithContext, _resetForTests, _internal } =
+      await import("../src/services/logger.js");
     _resetForTests();
     runWithContext({ sessionID: "ses_abc" }, () => {
       logger.info("test.scope", "with session");
@@ -78,7 +79,7 @@ describe("logger v2", () => {
       });
       logger.info("test.scope", "still has session");
     });
-    const text = readFileSync(logFile, "utf-8");
+    const text = _internal.stripAnsi(readFileSync(logFile, "utf-8"));
     expect(text).toMatch(/sessionID=ses_abc/);
     expect(text).toMatch(/agentID=choom/);
   });
@@ -96,20 +97,20 @@ describe("logger v2", () => {
   });
 
   it("the legacy log() export still works and routes to info", async () => {
-    const { log, _resetForTests } = await import("../src/services/logger.js");
+    const { log, _resetForTests, _internal } = await import("../src/services/logger.js");
     _resetForTests();
     log("legacy message", { key: "value" });
-    const text = readFileSync(logFile, "utf-8");
+    const text = _internal.stripAnsi(readFileSync(logFile, "utf-8"));
     expect(text).toMatch(/INFO\s+20\d\d-.* \[app\] legacy message/);
     expect(text).toMatch(/key=value/);
   });
 
   it("legacy log() detects an Error in the data object and serializes the chain", async () => {
-    const { log, _resetForTests } = await import("../src/services/logger.js");
+    const { log, _resetForTests, _internal } = await import("../src/services/logger.js");
     _resetForTests();
     const err = new Error("real error");
     log("legacy error", { error: err, context: "extra" });
-    const text = readFileSync(logFile, "utf-8");
+    const text = _internal.stripAnsi(readFileSync(logFile, "utf-8"));
     expect(text).toMatch(/  error:/);
     expect(text).toMatch(/"name": "Error"/);
     expect(text).toMatch(/"message": "real error"/);
