@@ -1,4 +1,5 @@
 import type { ProviderConfig } from "./providers/base-provider.js";
+import { logger } from "../logger.js";
 
 interface MemoryProviderRuntimeConfig {
   memoryModel?: string;
@@ -8,6 +9,9 @@ interface MemoryProviderRuntimeConfig {
   memoryExtraParams?: Record<string, unknown>;
   autoCaptureMaxIterations?: number;
   autoCaptureIterationTimeout?: number;
+  opencodeProvider?: string;
+  opencodeModel?: string;
+  memoryProvider?: string;
 }
 
 interface ProviderConfigOverrides {
@@ -20,7 +24,32 @@ export function buildMemoryProviderConfig(
   overrides: ProviderConfigOverrides = {}
 ): ProviderConfig {
   if (!config.memoryModel || !config.memoryApiUrl) {
-    throw new Error("External API not configured for memory provider");
+    const missing: string[] = [];
+    if (!config.memoryModel) missing.push("memoryModel");
+    if (!config.memoryApiUrl) missing.push("memoryApiUrl");
+    const detail =
+      `External API not configured for memory provider. ` +
+      `Missing: ${missing.join(", ")}. ` +
+      `memoryProvider=${config.memoryProvider}, ` +
+      `memoryModel=${config.memoryModel}, ` +
+      `memoryApiUrl=${config.memoryApiUrl}, ` +
+      `hasMemoryApiKey=${Boolean(config.memoryApiKey)}, ` +
+      `opencodeProvider=${config.opencodeProvider}, ` +
+      `opencodeModel=${config.opencodeModel}.`;
+    logger.error(
+      "auto-capture.inference",
+      "buildMemoryProviderConfig: external API configuration missing",
+      {
+        missingFields: missing.join(","),
+        memoryProvider: config.memoryProvider,
+        memoryModel: config.memoryModel,
+        memoryApiUrl: config.memoryApiUrl,
+        hasMemoryApiKey: Boolean(config.memoryApiKey),
+        opencodeProvider: config.opencodeProvider,
+        opencodeModel: config.opencodeModel,
+      }
+    );
+    throw new Error(detail);
   }
 
   return {

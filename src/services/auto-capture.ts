@@ -484,19 +484,23 @@ async function generateSummary(
   sessionID: string,
   userPrompt: string
 ): Promise<{ summary: string; type: string; tags: string[] } | null> {
-  logger.info("auto-capture.inference", "summary generation starting", {
-    sessionID,
-    contextLength: context.length,
-    userPromptLength: userPrompt.length,
+  const configSnapshot = {
     opencodeProvider: CONFIG.opencodeProvider,
     opencodeModel: CONFIG.opencodeModel,
     memoryProvider: CONFIG.memoryProvider,
     memoryModel: CONFIG.memoryModel,
-    hasMemoryApiUrl: Boolean(CONFIG.memoryApiUrl),
+    memoryApiUrl: CONFIG.memoryApiUrl,
     hasMemoryApiKey: Boolean(CONFIG.memoryApiKey),
+  };
+
+  logger.info("auto-capture.inference", "summary generation starting", {
+    sessionID,
+    contextLength: context.length,
+    userPromptLength: userPrompt.length,
+    ...configSnapshot,
   });
 
-  // Opencode provider path (when opencodeProvider + opencodeModel configured)
+  // Primary path: opencode provider (when both opencodeProvider and opencodeModel are set)
   if (CONFIG.opencodeProvider && CONFIG.opencodeModel) {
     if (CONFIG.memoryModel) {
       log("opencodeProvider takes precedence over memoryModel for auto-capture");
@@ -518,8 +522,7 @@ async function generateSummary(
         new Error(`opencode provider '${CONFIG.opencodeProvider}' is not connected`),
         {
           sessionID,
-          providerID: CONFIG.opencodeProvider,
-          modelID: CONFIG.opencodeModel,
+          ...configSnapshot,
         }
       );
       throw new Error(
@@ -535,8 +538,7 @@ async function generateSummary(
         new Error("v2 client not initialized"),
         {
           sessionID,
-          providerID: CONFIG.opencodeProvider,
-          modelID: CONFIG.opencodeModel,
+          ...configSnapshot,
         }
       );
       throw new Error(
@@ -615,21 +617,36 @@ Analyze this conversation. If it contains technical work (code, bugs, features, 
     };
   }
 
-  // Existing manual config path
+  // Fallback path: memory provider (when opencode path is not configured)
+  logger.info("auto-capture.inference", "using memory provider fallback path", {
+    sessionID,
+    ...configSnapshot,
+  });
+
   if (!CONFIG.memoryModel || !CONFIG.memoryApiUrl) {
+    const missing: string[] = [];
+    if (!CONFIG.memoryModel) missing.push("memoryModel");
+    if (!CONFIG.memoryApiUrl) missing.push("memoryApiUrl");
+    const detail =
+      `External API not configured for auto-capture. ` +
+      `Missing: ${missing.join(", ")}. ` +
+      `memoryProvider=${CONFIG.memoryProvider}, ` +
+      `memoryModel=${CONFIG.memoryModel}, ` +
+      `memoryApiUrl=${CONFIG.memoryApiUrl}, ` +
+      `hasMemoryApiKey=${Boolean(CONFIG.memoryApiKey)}, ` +
+      `opencodeProvider=${CONFIG.opencodeProvider}, ` +
+      `opencodeModel=${CONFIG.opencodeModel}.`;
     logger.error(
       "auto-capture.inference",
-      "external API configuration missing",
-      new Error("External API not configured for auto-capture"),
+      "memory fallback path: external API configuration missing",
+      new Error(detail),
       {
         sessionID,
-        memoryProvider: CONFIG.memoryProvider,
-        memoryModel: CONFIG.memoryModel,
-        hasMemoryApiUrl: Boolean(CONFIG.memoryApiUrl),
-        hasMemoryApiKey: Boolean(CONFIG.memoryApiKey),
+        missingFields: missing.join(","),
+        ...configSnapshot,
       }
     );
-    throw new Error("External API not configured for auto-capture");
+    throw new Error(detail);
   }
 
   const { AIProviderFactory } = await import("./ai/ai-provider-factory.js");

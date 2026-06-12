@@ -68,8 +68,18 @@ export class WebServer {
 
   private async _start(): Promise<void> {
     if (!this.config.enabled) {
+      logger.info("web.server", "web server start skipped (disabled in config)", {
+        enabled: this.config.enabled,
+        port: this.config.port,
+        host: this.config.host,
+      });
       return;
     }
+
+    logger.info("web.server", "web server start attempt", {
+      port: this.config.port,
+      host: this.config.host,
+    });
 
     try {
       this.server = Bun.serve({
@@ -79,6 +89,13 @@ export class WebServer {
         fetch: this.handleRequest.bind(this),
       });
       this.isOwner = true;
+      const actualUrl = `http://${this.config.host}:${this.config.port}`;
+      logger.info("web.server", "web server started successfully", {
+        url: actualUrl,
+        port: this.config.port,
+        host: this.config.host,
+        isOwner: this.isOwner,
+      });
     } catch (error) {
       const errorMsg = String(error);
 
@@ -89,10 +106,20 @@ export class WebServer {
       ) {
         this.isOwner = false;
         this.server = null;
+        logger.warn("web.server", "web server port already in use, becoming non-owner", {
+          port: this.config.port,
+          host: this.config.host,
+          error: errorMsg,
+        });
         this.startHealthCheckLoop();
       } else {
         this.isOwner = false;
         this.server = null;
+        logger.error("web.server", "web server failed to start (non-EADDRINUSE error)", error, {
+          port: this.config.port,
+          host: this.config.host,
+          errorMessage: errorMsg,
+        });
         log("Web server failed to start", { error: errorMsg });
         throw error;
       }
@@ -104,10 +131,20 @@ export class WebServer {
       return;
     }
 
+    logger.info("web.server", "health check loop started (polling for port availability)", {
+      port: this.config.port,
+      host: this.config.host,
+      intervalMs: 5000,
+    });
+
     this.healthCheckInterval = setInterval(async () => {
       const isAvailable = await this.checkServerAvailable();
 
       if (!isAvailable) {
+        logger.info("web.server", "port became available, attempting takeover", {
+          port: this.config.port,
+          host: this.config.host,
+        });
         this.stopHealthCheckLoop();
         await this.attemptTakeover();
       }
@@ -127,17 +164,30 @@ export class WebServer {
     await new Promise((resolve) => setTimeout(resolve, jitterMs));
 
     if (await this.checkServerAvailable()) {
+      logger.info("web.server", "takeover aborted: port still in use, resuming health check", {
+        port: this.config.port,
+        host: this.config.host,
+      });
       this.startHealthCheckLoop();
       return;
     }
 
     try {
+      logger.info("web.server", "takeover attempt: port is free, binding", {
+        port: this.config.port,
+        host: this.config.host,
+      });
       // Reset startPromise so _start() can run again
       this.startPromise = null;
       await this._start();
 
       if (this.isOwner) {
-        log("Web server takeover successful", { port: this.config.port });
+        const url = `http://${this.config.host}:${this.config.port}`;
+        logger.info("web.server", "web server takeover successful", {
+          url,
+          port: this.config.port,
+          host: this.config.host,
+        });
 
         if (this.onTakeoverCallback) {
           try {
@@ -146,8 +196,17 @@ export class WebServer {
             log("Takeover callback error", { error });
           }
         }
+      } else {
+        logger.warn("web.server", "takeover attempt did not gain ownership", {
+          port: this.config.port,
+          host: this.config.host,
+        });
       }
     } catch (error) {
+      logger.error("web.server", "takeover attempt threw, resuming health check", error, {
+        port: this.config.port,
+        host: this.config.host,
+      });
       this.startHealthCheckLoop();
     }
   }
