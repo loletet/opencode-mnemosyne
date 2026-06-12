@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 import { stripJsoncComments } from "./services/jsonc.js";
 import { resolveSecretValue } from "./services/secret-resolver.js";
+import { logger } from "./services/logger.js";
 
 const CONFIG_DIR = join(homedir(), ".config", "opencode");
 const DATA_DIR = join(homedir(), ".opencode-mnemosyne");
@@ -177,10 +178,24 @@ function loadConfigFromPaths(paths: string[]): MnemosyneConfig {
       try {
         const content = readFileSync(path, "utf-8");
         const json = stripJsoncComments(content);
-        return JSON.parse(json) as MnemosyneConfig;
-      } catch {}
+        const parsed = JSON.parse(json) as MnemosyneConfig;
+        logger.info("config", "config file loaded", {
+          path,
+          sizeBytes: content.length,
+          parsedKeys: Object.keys(parsed).sort(),
+        });
+        return parsed;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        logger.error("config", "config file parse failed — falling back to empty config", error, {
+          path,
+          sizeBytes: existsSync(path) ? readFileSync(path, "utf-8").length : 0,
+          errorMessage: message,
+        });
+      }
     }
   }
+  logger.info("config", "no config file found in paths", { pathsChecked: paths });
   return {};
 }
 
@@ -571,6 +586,19 @@ function buildConfig(fileConfig: MnemosyneConfig) {
 let _globalFileConfig = loadConfigFromPaths(CONFIG_FILES);
 export let CONFIG = buildConfig(_globalFileConfig);
 
+logger.info("config", "initial CONFIG built from global config files", {
+  configFilePaths: CONFIG_FILES,
+  globalFileKeys: Object.keys(_globalFileConfig).sort(),
+  resolved: {
+    opencodeProvider: CONFIG.opencodeProvider,
+    opencodeModel: CONFIG.opencodeModel,
+    memoryProvider: CONFIG.memoryProvider,
+    memoryModel: CONFIG.memoryModel,
+    memoryApiUrl: CONFIG.memoryApiUrl,
+    hasMemoryApiKey: Boolean(CONFIG.memoryApiKey),
+  },
+});
+
 export function initConfig(directory: string): void {
   const projectPaths = [
     join(directory, ".opencode", "opencode-mnemosyne.jsonc"),
@@ -580,6 +608,20 @@ export function initConfig(directory: string): void {
   const projectConfig = loadConfigFromPaths(projectPaths);
   const merged: MnemosyneConfig = { ...globalConfig, ...projectConfig };
   CONFIG = buildConfig(merged);
+  logger.info("config", "CONFIG object built", {
+    directory,
+    globalKeys: Object.keys(globalConfig).sort(),
+    projectKeys: Object.keys(projectConfig).sort(),
+    mergedKeys: Object.keys(merged).sort(),
+    resolved: {
+      opencodeProvider: CONFIG.opencodeProvider,
+      opencodeModel: CONFIG.opencodeModel,
+      memoryProvider: CONFIG.memoryProvider,
+      memoryModel: CONFIG.memoryModel,
+      memoryApiUrl: CONFIG.memoryApiUrl,
+      hasMemoryApiKey: Boolean(CONFIG.memoryApiKey),
+    },
+  });
 }
 
 export function isConfigured(): boolean {
