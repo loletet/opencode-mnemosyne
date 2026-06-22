@@ -16,7 +16,7 @@ describe("project-scoped config resolution", () => {
   it("uses global config when no project config exists", () => {
     existsSpy = spyOn(fs, "existsSync").mockImplementation((p) => {
       const path = String(p);
-      return path.includes(".config/opencode/opencode-mnemosyne");
+      return path.includes("opencode-mnemosyne/opencode-mnemosyne");
     });
     readSpy = spyOn(fs, "readFileSync").mockReturnValue(
       JSON.stringify({ opencodeModel: "global-model" })

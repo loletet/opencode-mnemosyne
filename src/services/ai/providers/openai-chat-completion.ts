@@ -316,7 +316,30 @@ export class OpenAIChatCompletionProvider extends BaseAIProvider {
           };
         }
 
-        const data: unknown = await response.json();
+        let data: unknown;
+        try {
+          data = await response.json();
+        } catch (jsonError) {
+          const bodyText = await response.text().catch(() => "<unreadable>");
+          logger.error(
+            "auto-capture.inference.http",
+            "openai-chat response body was not valid JSON",
+            jsonError,
+            {
+              sessionId,
+              aiSessionId: session.id,
+              iteration: iterations,
+              status: response.status,
+              bodyLength: bodyText.length,
+              bodyPreview: bodyText.slice(0, 500),
+            }
+          );
+          return {
+            success: false,
+            error: `Response body was not valid JSON (HTTP ${response.status}): ${bodyText.slice(0, 200)}`,
+            iterations,
+          };
+        }
 
         logger.info("auto-capture.inference.http", "openai-chat response JSON parsed", {
           sessionId,

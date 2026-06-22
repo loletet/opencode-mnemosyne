@@ -120,21 +120,56 @@ export async function performAutoCapture(
       promptId: prompt.id,
     });
 
-    const response = await ctx.client.session.messages({
-      path: { id: sessionID },
-    });
+    let response: Awaited<ReturnType<typeof ctx.client.session.messages>>;
+    try {
+      response = await ctx.client.session.messages({
+        path: { id: sessionID },
+      });
+    } catch (fetchError) {
+      logger.error(
+        "auto-capture",
+        "session messages HTTP call threw (network/DNS/connection error)",
+        fetchError,
+        {
+          sessionID,
+          trigger,
+          promptId: prompt.id,
+        }
+      );
+      throw new Error(
+        `Failed to load session messages for ${sessionID}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`
+      );
+    }
 
     if (!response.data) {
-      logger.info("auto-capture", "capture stopped: session messages response had no data", {
-        sessionID,
-        trigger,
-        promptId: prompt.id,
-      });
+      const httpStatus = (response as { response?: Response }).response?.status;
+      const httpStatusText = (response as { response?: Response }).response?.statusText;
+      const errorBody = (response as { error?: unknown }).error;
+      logger.error(
+        "auto-capture",
+        "session messages response had no data",
+        new Error("Session messages response had no data"),
+        {
+          sessionID,
+          trigger,
+          promptId: prompt.id,
+          httpStatus,
+          httpStatusText,
+          errorBody:
+            errorBody === undefined
+              ? "undefined"
+              : typeof errorBody === "string"
+                ? errorBody
+                : JSON.stringify(errorBody).slice(0, 1000),
+          responseType: typeof response,
+          responseKeys: Object.keys(response).sort(),
+        }
+      );
       return {
         success: false,
         status: "no-session-message-data",
         promptId: prompt.id,
-        message: "Session messages response had no data",
+        message: `Session messages response had no data (HTTP ${httpStatus ?? "?"} ${httpStatusText ?? ""})`,
       };
     }
 
