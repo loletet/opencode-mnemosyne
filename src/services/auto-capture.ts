@@ -86,7 +86,7 @@ export async function performAutoCapture(
       messageId: prompt.messageId,
       projectPath: prompt.projectPath,
       promptLength: prompt.content.length,
-      promptPreview: prompt.content.slice(0, 240),
+      promptPreview: prompt.content.slice(0, prompt.content.length),
     });
 
     if (!userPromptManager.claimPrompt(prompt.id)) {
@@ -237,7 +237,7 @@ export async function performAutoCapture(
       trigger,
       promptId: prompt.id,
       contextLength: context.length,
-      contextPreview: context.slice(0, 500),
+      contextPreview: context.slice(0, context.length),
     });
 
     const summaryResult = await generateSummary(context, sessionID, prompt.content);
