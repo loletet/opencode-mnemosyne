@@ -227,6 +227,11 @@ export const MnemosynePlugin: Plugin = async (ctx: PluginInput) => {
       if (!isConfigured() || !CONFIG.chatMessage.enabled) return;
 
       try {
+        const { isTransientSession } = await import("./services/ai/opencode-provider.js");
+        if (isTransientSession(input.sessionID)) {
+          return;
+        }
+
         const textParts = output.parts.filter(
           (p): p is Part & { type: "text"; text: string } => p.type === "text"
         );

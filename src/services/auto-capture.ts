@@ -4,6 +4,7 @@ import { getTags } from "./tags.js";
 import { log, logger } from "./logger.js";
 import { CONFIG } from "../config.js";
 import { userPromptManager } from "./user-prompt/user-prompt-manager.js";
+import type { MemoryType } from "../types/index.js";
 
 interface ToolCallInfo {
   name: string;
@@ -145,10 +146,9 @@ export async function performAutoCapture(
       const httpStatus = (response as { response?: Response }).response?.status;
       const httpStatusText = (response as { response?: Response }).response?.statusText;
       const errorBody = (response as { error?: unknown }).error;
-      logger.error(
+      logger.warn(
         "auto-capture",
-        "session messages response had no data",
-        new Error("Session messages response had no data"),
+        "session messages response had no data — falling back to prompt-only capture",
         {
           sessionID,
           trigger,
@@ -161,10 +161,61 @@ export async function performAutoCapture(
               : typeof errorBody === "string"
                 ? errorBody
                 : JSON.stringify(errorBody).slice(0, 1000),
-          responseType: typeof response,
-          responseKeys: Object.keys(response).sort(),
         }
       );
+
+      if (httpStatus === 404) {
+        logger.info("auto-capture", "session not found (404) — using stored prompt content only", {
+          sessionID,
+          trigger,
+          promptId: prompt.id,
+          promptLength: prompt.content.length,
+        });
+        const fallbackTags = getTags(directory);
+        const context = buildMarkdownContext(prompt.content, [], [], null);
+        const summaryResult = await generateSummary(context, sessionID, prompt.content);
+
+        if (!summaryResult || summaryResult.type === "skip") {
+          userPromptManager.deletePrompt(prompt.id);
+          promptCompleted = true;
+          return {
+            success: true,
+            status: "skipped",
+            promptId: prompt.id,
+            summaryType: summaryResult?.type,
+            message: "Inference returned skip; prompt was deleted",
+          };
+        }
+
+        const captureTags = fallbackTags.project;
+        const memoryResult = await memoryClient.addMemory(summaryResult.summary, captureTags.tag, {
+          type: summaryResult.type as MemoryType,
+          tags: summaryResult.tags,
+          sessionID,
+          displayName: captureTags.displayName,
+          userName: captureTags.userName,
+          userEmail: captureTags.userEmail,
+          projectPath: captureTags.projectPath,
+          projectName: captureTags.projectName,
+          gitRepoUrl: captureTags.gitRepoUrl,
+        });
+
+        if (memoryResult.success) {
+          userPromptManager.markAsCaptured(prompt.id);
+          userPromptManager.linkMemoryToPrompt(prompt.id, memoryResult.id ?? "");
+          promptCompleted = true;
+          return {
+            success: true,
+            status: "captured",
+            promptId: prompt.id,
+            memoryId: memoryResult.id,
+            summaryType: summaryResult.type,
+            message: "Inference completed from stored prompt (session was unavailable)",
+          };
+        }
+        throw new Error(memoryResult.error || "memoryClient.addMemory failed");
+      }
+
       return {
         success: false,
         status: "no-session-message-data",
