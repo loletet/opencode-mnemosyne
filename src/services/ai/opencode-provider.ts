@@ -16,6 +16,11 @@ import { logger } from "../logger.js";
 
 let _connectedProviders: Set<string> = new Set();
 let _v2Client: OpencodeClient | undefined;
+const _transientSessionIDs: Set<string> = new Set();
+
+export function isTransientSession(sessionID: string): boolean {
+  return _transientSessionIDs.has(sessionID);
+}
 
 export function setConnectedProviders(providers: string[]): void {
   _connectedProviders = new Set(providers);
@@ -100,6 +105,7 @@ export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<
       "opencode-mnemosyne: session.create returned no session id; cannot generate structured output"
     );
   }
+  _transientSessionIDs.add(sessionID);
 
   try {
     logger.info("auto-capture.inference", "opencode session.prompt request starting", {
@@ -194,5 +200,6 @@ export async function generateStructuredOutput<T>(opts: StructuredOutputOptions<
         sessionID,
       });
     }
+    _transientSessionIDs.delete(sessionID);
   }
 }

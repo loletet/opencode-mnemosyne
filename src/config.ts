@@ -5,7 +5,7 @@ import { stripJsoncComments } from "./services/jsonc.js";
 import { resolveSecretValue } from "./services/secret-resolver.js";
 import { logger } from "./services/logger.js";
 
-const CONFIG_DIR = join(homedir(), ".config", "opencode");
+const CONFIG_DIR = join(homedir(), ".opencode-mnemosyne");
 const DATA_DIR = join(homedir(), ".opencode-mnemosyne");
 const CONFIG_FILES = [
   join(CONFIG_DIR, "opencode-mnemosyne.jsonc"),

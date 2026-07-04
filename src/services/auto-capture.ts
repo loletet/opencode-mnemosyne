@@ -4,6 +4,7 @@ import { getTags } from "./tags.js";
 import { log, logger } from "./logger.js";
 import { CONFIG } from "../config.js";
 import { userPromptManager } from "./user-prompt/user-prompt-manager.js";
+import type { MemoryType } from "../types/index.js";
 
 interface ToolCallInfo {
   name: string;
@@ -86,7 +87,7 @@ export async function performAutoCapture(
       messageId: prompt.messageId,
       projectPath: prompt.projectPath,
       promptLength: prompt.content.length,
-      promptPreview: prompt.content.slice(0, 240),
+      promptPreview: prompt.content.slice(0, prompt.content.length),
     });
 
     if (!userPromptManager.claimPrompt(prompt.id)) {
@@ -120,21 +121,106 @@ export async function performAutoCapture(
       promptId: prompt.id,
     });
 
-    const response = await ctx.client.session.messages({
-      path: { id: sessionID },
-    });
+    let response: Awaited<ReturnType<typeof ctx.client.session.messages>>;
+    try {
+      response = await ctx.client.session.messages({
+        path: { id: sessionID },
+      });
+    } catch (fetchError) {
+      logger.error(
+        "auto-capture",
+        "session messages HTTP call threw (network/DNS/connection error)",
+        fetchError,
+        {
+          sessionID,
+          trigger,
+          promptId: prompt.id,
+        }
+      );
+      throw new Error(
+        `Failed to load session messages for ${sessionID}: ${fetchError instanceof Error ? fetchError.message : String(fetchError)}`
+      );
+    }
 
     if (!response.data) {
-      logger.info("auto-capture", "capture stopped: session messages response had no data", {
-        sessionID,
-        trigger,
-        promptId: prompt.id,
-      });
+      const httpStatus = (response as { response?: Response }).response?.status;
+      const httpStatusText = (response as { response?: Response }).response?.statusText;
+      const errorBody = (response as { error?: unknown }).error;
+      logger.warn(
+        "auto-capture",
+        "session messages response had no data — falling back to prompt-only capture",
+        {
+          sessionID,
+          trigger,
+          promptId: prompt.id,
+          httpStatus,
+          httpStatusText,
+          errorBody:
+            errorBody === undefined
+              ? "undefined"
+              : typeof errorBody === "string"
+                ? errorBody
+                : JSON.stringify(errorBody).slice(0, 1000),
+        }
+      );
+
+      if (httpStatus === 404) {
+        logger.info("auto-capture", "session not found (404) — using stored prompt content only", {
+          sessionID,
+          trigger,
+          promptId: prompt.id,
+          promptLength: prompt.content.length,
+        });
+        const fallbackTags = getTags(directory);
+        const context = buildMarkdownContext(prompt.content, [], [], null);
+        const summaryResult = await generateSummary(context, sessionID, prompt.content);
+
+        if (!summaryResult || summaryResult.type === "skip") {
+          userPromptManager.deletePrompt(prompt.id);
+          promptCompleted = true;
+          return {
+            success: true,
+            status: "skipped",
+            promptId: prompt.id,
+            summaryType: summaryResult?.type,
+            message: "Inference returned skip; prompt was deleted",
+          };
+        }
+
+        const captureTags = fallbackTags.project;
+        const memoryResult = await memoryClient.addMemory(summaryResult.summary, captureTags.tag, {
+          type: summaryResult.type as MemoryType,
+          tags: summaryResult.tags,
+          sessionID,
+          displayName: captureTags.displayName,
+          userName: captureTags.userName,
+          userEmail: captureTags.userEmail,
+          projectPath: captureTags.projectPath,
+          projectName: captureTags.projectName,
+          gitRepoUrl: captureTags.gitRepoUrl,
+        });
+
+        if (memoryResult.success) {
+          userPromptManager.markAsCaptured(prompt.id);
+          userPromptManager.linkMemoryToPrompt(prompt.id, memoryResult.id ?? "");
+          promptCompleted = true;
+          return {
+            success: true,
+            status: "captured",
+            promptId: prompt.id,
+            memoryId: memoryResult.id,
+            summaryType: summaryResult.type,
+            message: "Inference completed from stored prompt (session was unavailable)",
+          };
+        }
+        throw new Error(memoryResult.error || "memoryClient.addMemory failed");
+      }
+
       return {
         success: false,
         status: "no-session-message-data",
         promptId: prompt.id,
-        message: "Session messages response had no data",
+        message: `Session messages response had no data (HTTP ${httpStatus ?? "?"} ${httpStatusText ?? ""})`,
       };
     }
 
@@ -237,7 +323,7 @@ export async function performAutoCapture(
       trigger,
       promptId: prompt.id,
       contextLength: context.length,
-      contextPreview: context.slice(0, 500),
+      contextPreview: context.slice(0, context.length),
     });
 
     const summaryResult = await generateSummary(context, sessionID, prompt.content);
